@@ -26,7 +26,7 @@ def run_awq(model_id, group_size=128, save_path=None):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="meta-llama/Meta-Llama-3.1-8B")
+    parser.add_argument("--model", default="Qwen/Qwen2.5-7B") #"meta-llama/Meta-Llama-3.1-8B"
     parser.add_argument("--group-size", type=int, default=128)
     parser.add_argument("--save", default=None)
     args = parser.parse_args()

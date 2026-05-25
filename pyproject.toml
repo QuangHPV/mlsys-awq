@@ -3,11 +3,13 @@ name = "awq"
 version = "0.1.0"
 requires-python = "==3.10.*"
 dependencies = [
+    "numpy==1.26.4",
     "torch==2.3.0",
     "triton==2.3.0",
     "transformers==4.43.0",
     "accelerate",
     "datasets",
+    "pyarrow<15",
     "lm-eval",
     "auto-gptq",
     "sentencepiece",
