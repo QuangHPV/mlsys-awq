@@ -21,17 +21,16 @@ def collect_activation_scales(model, calib_data, batch_size=4):
     act_scales = {}
     hooks = []
 
+    def make_hook(n):
+        def hook(_, inp, __):
+            x = inp[0].detach().float()
+            channel_max = x.abs().view(-1, x.shape[-1]).max(0).values
+            act_scales[n] = torch.maximum(act_scales[n], channel_max) if n in act_scales else channel_max
+        return hook
+
     for name, module in model.named_modules():
         if not isinstance(module, nn.Linear):
             continue
-
-        def make_hook(n):
-            def hook(_, inp, __):
-                x = inp[0].detach().float()
-                channel_max = x.abs().view(-1, x.shape[-1]).max(0).values
-                act_scales[n] = torch.maximum(act_scales[n], channel_max) if n in act_scales else channel_max
-            return hook
-
         hooks.append(module.register_forward_hook(make_hook(name)))
 
     model.eval()
