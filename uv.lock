@@ -173,7 +173,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=15" },
     { name = "sentencepiece" },
     { name = "torch", specifier = "==2.3.0", index = "https://download.pytorch.org/whl/cu121" },
-    { name = "transformers", specifier = "==4.43.0" },
+    { name = "transformers", specifier = "==4.43.2" },
     { name = "triton", specifier = "==2.3.0", index = "https://download.pytorch.org/whl/cu121" },
 ]
 
@@ -1359,7 +1359,7 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "4.43.0"
+version = "4.43.2"
 source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 dependencies = [
     { name = "filelock" },
@@ -1373,9 +1373,9 @@ dependencies = [
     { name = "tokenizers" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/f8/d9/9d932e3bff226465234a1a4dbc2e308a2a7333b92103b39bbd17a7d3a95c/transformers-4.43.0.tar.gz", hash = "sha256:4154e659eff31b0bf3b21b2c5d62e38ac8973e33c53cfe28284a19c8558234e2", size = 8071037, upload-time = "2024-07-23T15:06:28.804Z" }
+sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/12/73/6f02dd73d2e57ad935edebc18a721d17b52c575a74f7c84cbf3baba52c55/transformers-4.43.2.tar.gz", hash = "sha256:99dbbdeef9d451cdbc1c5316dce3af3dd5bb56b6cda5d0c564253e8fa7ccaf02", size = 8071744, upload-time = "2024-07-24T15:51:00.437Z" }
 wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/23/c6/445ed1d345c215a5ad094cb00359d9697efd5ddb2e5927e32c6852fad666/transformers-4.43.0-py3-none-any.whl", hash = "sha256:0158b430c3bab1abde3232598e250916edd906680b9ffe9d4e1b0b3fafbfc0ed", size = 9411812, upload-time = "2024-07-23T15:06:16.908Z" },
+    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/13/63/cccd0297770d7096c19c99d4c542f3068a30e73cdfd971a920bfa686cb3a/transformers-4.43.2-py3-none-any.whl", hash = "sha256:283c8b47cf38640c5c0caea60be0dfa948669fa48e9739b03717cbf5e8b20f11", size = 9412078, upload-time = "2024-07-24T15:50:47.856Z" },
 ]
 
 [[package]]

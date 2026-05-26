@@ -7,7 +7,7 @@ import torch
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-import awq_linear
+import awq
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model", default="meta-llama/Meta-Llama-3.1-8B")
@@ -41,7 +41,11 @@ def compute_perplexity(model, tokenizer):
 
 def append_result(result):
     path = os.path.join(args.result_dir, "experiments.json")
-    existing = json.load(open(path)) if os.path.exists(path) else []
+    if os.path.exists(path):
+        with open(path) as f:
+            existing = json.load(f)
+    else:
+        existing = []
     existing.append(result)
     with open(path, "w") as f:
         json.dump(existing, f, indent=2)
@@ -69,7 +73,7 @@ quant_params = checkpoint["quant_params"]
 group_size = checkpoint["group_size"]
 
 model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.float16, device_map="cuda")
-model = awq_linear.replace_with_awq_linear(model, quant_params, group_size=group_size)
+model = awq.replace_with_awq_linear(model, quant_params, group_size=group_size)
 model.eval()
 
 torch.cuda.reset_peak_memory_stats()

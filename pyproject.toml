@@ -6,7 +6,7 @@ dependencies = [
     "numpy==1.26.4",
     "torch==2.3.0",
     "triton==2.3.0",
-    "transformers==4.43.0",
+    "transformers==4.43.2",
     "accelerate",
     "datasets>=2.20.0",
     "fsspec>=2024.5.0",

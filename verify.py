@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
-from quantize import quantize_and_pack, pseudo_quantize
-from triton_kernel import dequant_gemm
+import awq
 
 
 def verify_kernel(group_size=128):
@@ -10,8 +9,8 @@ def verify_kernel(group_size=128):
     w = torch.randn(N, K, device="cuda", dtype=torch.float16)
 
     ref = x @ w.T
-    w_int4, scales, zeros = quantize_and_pack(w, group_size=group_size)
-    out = dequant_gemm(x, w_int4, scales, zeros, group_size)
+    w_int4, scales, zeros = awq.quantize_and_pack(w, group_size=group_size)
+    out = awq.dequant_gemm(x, w_int4, scales, zeros, group_size)
 
     max_diff = (out - ref).abs().max().item()
     # cosine sim captures direction error independent of magnitude; expect >0.999 at INT4 group=128
@@ -22,7 +21,7 @@ def verify_kernel(group_size=128):
 
 def verify_pseudo_quantize(group_size=128):
     w = torch.randn(64, 256, device="cuda")
-    w_q = pseudo_quantize(w, n_bits=8, group_size=group_size)
+    w_q = awq.pseudo_quantize(w, n_bits=8, group_size=group_size)
     err = (w_q - w).abs().max().item()
     print(f"pseudo_quantize 8-bit max_err={err:.6f}")
 
