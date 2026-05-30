@@ -16,3 +16,14 @@ HF_ENDPOINT=https://hf-mirror.com uv run experiment1.py --model "meta-llama/Meta
 
 HF_ENDPOINT=https://hf-mirror.com uv run experiment1.py --model "Qwen/Qwen2.5-7B" \
     --weight_path "checkpoint/awq_Qwen_Qwen2.5-7B.pt"
+
+
+# GPTQ/RTN
+uv run run_quantization.py --model Qwen/Qwen2.5-7B --method gptq
+uv run run_quantization.py --model Qwen/Qwen2.5-7B --method rtn
+uv run run_quantization.py --model meta-llama/Meta-Llama-3.1-8B --method rtn
+uv run run_quantization.py --model meta-llama/Meta-Llama-3.1-8B --method awq
+uv run experiment1.py --weight_path checkpoint/gptq_Qwen_Qwen2.5-7B.pt
+uv run experiment1.py --baseline --model Qwen/Qwen2.5-7B
+uv run experiment1.py --weight_path ../checkpoint/awq_Qwen_Qwen2.5-7B.pt
+uv run experiment1.py --weight_path ../checkpoint/awq_meta-llama_Meta-Llama-3.1-8B.pt

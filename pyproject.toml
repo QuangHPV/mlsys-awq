@@ -16,6 +16,7 @@ dependencies = [
     "auto-gptq",
     "sentencepiece",
     "huggingface_hub",
+    "tqdm>=4.67.3",
 ]
 
 [[tool.uv.index]]

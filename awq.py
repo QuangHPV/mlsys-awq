@@ -3,7 +3,7 @@ import torch.nn as nn
 import triton
 import triton.language as tl
 from datasets import load_dataset
-
+from tqdm.auto import trange, tqdm
 
 # ── Triton dequant-GEMM kernel ────────────────────────────────────────────────
 
@@ -93,7 +93,7 @@ def dequant_gemm(x, w_int4, scales, zeros, group_size=128):
 
 # ── Calibration & quantization ────────────────────────────────────────────────
 
-def get_calib_data(tokenizer, n_samples=128, seq_len=512):
+def get_calib_data(tokenizer, n_samples=512, seq_len=2048):
     dataset = load_dataset("mit-han-lab/pile-val-backup", split="validation")
     samples = []
     for item in dataset:
@@ -105,17 +105,28 @@ def get_calib_data(tokenizer, n_samples=128, seq_len=512):
     return torch.cat(samples, dim=0)
 
 
-def collect_activation_scales(model, calib_data, batch_size=4):
-    # max over the calibration set: one large activation is enough to cause
-    # clipping, so mean would underestimate the true channel magnitude
-    act_scales = {}
+def collect_activation_stats(model, calib_data, batch_size=2, n_samples_for_loss=512):
+    # per-linear stats from one calibration pass:
+    #   act_scales[name]: (C_in,) per-channel mean |x| — this is s_X in the AWQ paper
+    #   act_inputs[name]: (<=n_samples_for_loss, C_in) cached input rows on CPU,
+    #     used to evaluate output-MSE during the alpha search
+    sums, counts, inputs = {}, {}, {}
     hooks = []
 
     def make_hook(n):
         def hook(_, inp, __):
-            x = inp[0].detach().float()
-            channel_max = x.abs().view(-1, x.shape[-1]).max(0).values
-            act_scales[n] = torch.maximum(act_scales[n], channel_max) if n in act_scales else channel_max
+            x = inp[0].detach().reshape(-1, inp[0].shape[-1])  # (T, C_in), fp16
+            abs_sum = x.float().abs().sum(0)
+            if n in sums:
+                sums[n] += abs_sum
+                counts[n] += x.shape[0]
+            else:
+                sums[n] = abs_sum
+                counts[n] = x.shape[0]
+            have = inputs[n].shape[0] if n in inputs else 0
+            if have < n_samples_for_loss:
+                take = x[: n_samples_for_loss - have].cpu()
+                inputs[n] = torch.cat([inputs[n], take], dim=0) if n in inputs else take
         return hook
 
     for name, module in model.named_modules():
@@ -125,13 +136,14 @@ def collect_activation_scales(model, calib_data, batch_size=4):
 
     model.eval()
     with torch.no_grad():
-        for i in range(0, len(calib_data), batch_size):
+        for i in trange(0, len(calib_data), batch_size, desc="Collecting activations"):
             model(calib_data[i:i + batch_size].to(next(model.parameters()).device))
 
     for h in hooks:
         h.remove()
 
-    return act_scales
+    act_scales = {n: sums[n] / counts[n] for n in sums}
+    return act_scales, inputs
 
 
 def pseudo_quantize(w, n_bits=4, group_size=128):
@@ -147,22 +159,24 @@ def pseudo_quantize(w, n_bits=4, group_size=128):
     return ((w_int - zero) * scale).reshape(C_out, C_in)
 
 
-def search_best_scale(weight, act_scale, group_size=128, n_grid=20):
-    # grid search over s = act_scale^alpha, alpha in [0, 1]
+def search_best_scale(weight, act_scale, act_input, group_size=128, n_grid=20):
+    # AWQ paper Eq. 4: minimise output-reconstruction MSE on calibration inputs
+    #   L(alpha) = || (X / s) @ Q(W * s)^T - X @ W^T ||^2,   s = s_X^alpha
     w = weight.float()
-    s = act_scale.float().to(w.device).clamp(min=1e-4)
+    s_x = act_scale.float().to(w.device).clamp(min=1e-4)
+    X = act_input.float().to(w.device)
+    Y_ref = X @ w.t()
+
     best_scale = torch.ones(w.shape[1], device=w.device)
     best_error = float("inf")
-
-    for alpha in torch.linspace(0, 1, n_grid):
-        candidate = s.pow(alpha.item())
-        w_scaled = w * candidate.unsqueeze(0)
-        w_q = pseudo_quantize(w_scaled, group_size=group_size) / candidate.unsqueeze(0)
-        err = (w_q - w).pow(2).mean().item()
+    for alpha in tqdm(torch.linspace(0, 1, n_grid), desc="Grid search"):
+        s = s_x.pow(alpha.item())
+        w_eff = pseudo_quantize(w * s.unsqueeze(0), group_size=group_size) / s.unsqueeze(0)
+        Y_q = X @ w_eff.t()
+        err = (Y_q - Y_ref).pow(2).mean().item()
         if err < best_error:
             best_error = err
-            best_scale = candidate.clone()
-
+            best_scale = s.clone()
     return best_scale
 
 
@@ -185,9 +199,9 @@ def quantize_and_pack(w, n_bits=4, group_size=128):
     )
 
 
-def quantize_model(model, act_scales, group_size=128):
+def quantize_model(model, act_scales, act_inputs, group_size=128):
     quant_params = {}
-    for name, module in model.named_modules():
+    for name, module in tqdm(model.named_modules(), total=len(list(model.named_modules())), desc="AWQ quantization"):
         if not isinstance(module, nn.Linear) or name not in act_scales:
             continue
         if name in ("lm_head", "model.embed_tokens"):
@@ -195,7 +209,10 @@ def quantize_model(model, act_scales, group_size=128):
 
         w = module.weight.data
         s = act_scales[name].to(w.device)
-        best_scale = search_best_scale(w, s, group_size)
+        X = act_inputs[name]
+        best_scale = search_best_scale(w, s, X, group_size=group_size)
+        print(name, "scale stats:", best_scale.min().item(), best_scale.max().item(), best_scale.mean().item())
+
         w_int4, scales, zeros = quantize_and_pack(w.float() * best_scale.unsqueeze(0), group_size=group_size)
 
         quant_params[name] = {
@@ -207,6 +224,26 @@ def quantize_model(model, act_scales, group_size=128):
         }
         print(f"quantized {name}")
 
+    return quant_params
+
+
+def quantize_model_rtn(model, group_size=128):
+    quant_params = {}
+    for name, module in model.named_modules():
+        if not isinstance(module, nn.Linear):
+            continue
+        if name in ("lm_head", "model.embed_tokens"):
+            continue
+        w = module.weight.data
+        w_int4, scales, zeros = quantize_and_pack(w.float(), group_size=group_size)
+        quant_params[name] = {
+            "weight_int4": w_int4,
+            "scales": scales,
+            "zeros": zeros,
+            "awq_scale": torch.ones(w.shape[1], dtype=torch.float16, device=w.device),
+            "bias": module.bias,
+        }
+        print(f"quantized {name}")
     return quant_params
 
 

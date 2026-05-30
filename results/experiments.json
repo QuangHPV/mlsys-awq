@@ -7,12 +7,6 @@
   },
   {
     "model": "meta-llama/Meta-Llama-3.1-8B",
-    "mode": "fp16",
-    "perplexity": 7.917104246520911,
-    "peak_vram_gb": 16.667500032
-  },
-  {
-    "model": "meta-llama/Meta-Llama-3.1-8B",
     "mode": "awq_int4",
     "perplexity": 8.772751359840143,
     "peak_vram_gb": 6.419111424
@@ -28,5 +22,47 @@
     "mode": "awq_int4",
     "perplexity": 8.377049778158627,
     "peak_vram_gb": 8.265380352
+  },
+  {
+    "model": "meta-llama/Meta-Llama-3.1-8B",
+    "mode": "rtn_int4",
+    "perplexity": 8.783345285802595,
+    "peak_vram_gb": 6.419111424
+  },
+  {
+    "model": "meta-llama/Meta-Llama-3.1-8B",
+    "mode": "awq_int4",
+    "perplexity": 8.390095765019726,
+    "peak_vram_gb": 6.419111424
+  },
+  {
+    "model": "meta-llama/Meta-Llama-3.1-8B",
+    "mode": "awq_int4",
+    "perplexity": 8.403812846315116,
+    "peak_vram_gb": 6.419111424
+  },
+  {
+    "model": "meta-llama/Meta-Llama-3.1-8B",
+    "mode": "awq_int4",
+    "perplexity": 8.404071518298752,
+    "peak_vram_gb": 6.419111424
+  },
+  {
+    "model": "meta-llama/Meta-Llama-3.1-8B",
+    "mode": "rtn_int4",
+    "perplexity": 5307.194126849634,
+    "peak_vram_gb": 8.265489408
+  },
+  {
+    "model": "meta-llama/Meta-Llama-3.1-8B",
+    "mode": "awq_int4",
+    "perplexity": 5046.84366037248,
+    "peak_vram_gb": 8.265489408
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B",
+    "mode": "fp16",
+    "perplexity": 7.771384294527394,
+    "peak_vram_gb": 17.822851584
   }
 ]

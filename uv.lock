@@ -156,6 +156,7 @@ dependencies = [
     { name = "pyarrow" },
     { name = "sentencepiece" },
     { name = "torch" },
+    { name = "tqdm" },
     { name = "transformers" },
     { name = "triton" },
 ]
@@ -173,6 +174,7 @@ requires-dist = [
     { name = "pyarrow", specifier = ">=15" },
     { name = "sentencepiece" },
     { name = "torch", specifier = "==2.3.0", index = "https://download.pytorch.org/whl/cu121" },
+    { name = "tqdm", specifier = ">=4.67.3" },
     { name = "transformers", specifier = "==4.43.2" },
     { name = "triton", specifier = "==2.3.0", index = "https://download.pytorch.org/whl/cu121" },
 ]
