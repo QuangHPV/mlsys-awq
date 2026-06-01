@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-import awq
+import awq_impl as awq
 
 
 def verify_kernel(group_size=128):

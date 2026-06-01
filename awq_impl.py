@@ -80,15 +80,22 @@ def dequant_gemm(x, w_int4, scales, zeros, group_size=128):
     assert x.dtype == torch.float16
     assert x.is_contiguous() and w_int4.is_contiguous()
 
-    M, K = x.shape
-    N = w_int4.shape[0]
-    out = torch.empty((M, N), device=x.device, dtype=torch.float16)
+    N, K_half = w_int4.shape
+    K = K_half * 2
 
-    # grid defines how many programs launch: one per output tile
-    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]), triton.cdiv(N, meta["BLOCK_N"]))
+    # unpack two INT4 per byte: low nibble → even k, high nibble → odd k
+    lo = (w_int4 & 0xF).to(torch.int16)
+    hi = ((w_int4 >> 4) & 0xF).to(torch.int16)
+    w_int = torch.stack([lo, hi], dim=-1).reshape(N, K).float()
 
-    _dequant_gemm_kernel[grid](x, w_int4, scales, zeros, out, M, N, K, GROUP_SIZE=group_size)
-    return out
+    # per-group dequant: (w_int - zero) * scale, broadcast across each group
+    n_groups = K // group_size
+    w_int = w_int.reshape(N, n_groups, group_size)
+    w_fp = (w_int - zeros.float().unsqueeze(-1)) * scales.float().unsqueeze(-1)
+    w_fp = w_fp.reshape(N, K)
+
+    # fp32 accumulate to match what the Triton kernel was doing
+    return (x.float() @ w_fp.t()).to(torch.float16)
 
 
 # ── Calibration & quantization ────────────────────────────────────────────────

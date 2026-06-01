@@ -64,5 +64,52 @@
     "mode": "fp16",
     "perplexity": 7.771384294527394,
     "peak_vram_gb": 17.822851584
+  },
+  {
+    "model": "meta-llama/Meta-Llama-3.1-8B",
+    "mode": "awq_int4",
+    "perplexity": 5047.189429349552,
+    "peak_vram_gb": 8.648592896
+  },
+  {
+    "model": "meta-llama/Meta-Llama-3.1-8B",
+    "mode": "awq_int4",
+    "perplexity": 5047.189429349552,
+    "peak_vram_gb": 8.648592896
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+    "perplexity": 9.60445270166871,
+    "peak_vram_gb": 6.783101952
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "perplexity": 8.851526730348453,
+    "peak_vram_gb": 16.414614016
+  },
+  {
+    "weight_path": "../checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.pt",
+    "perplexity": 9.423379688709828,
+    "peak_vram_gb": 7.241222656
+  },
+  {
+    "weight_path": "../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.pt",
+    "perplexity": 9.742728790043675,
+    "peak_vram_gb": 6.76041472
+  },
+  {
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "perplexity": 9.29248119421021,
+    "peak_vram_gb": 16.667500032
+  },
+  {
+    "weight_path": "../checkpoint/rtn_meta-llama_Llama-3.1-8B-Instruct.pt",
+    "perplexity": 10.015505005291905,
+    "peak_vram_gb": 6.76041472
+  },
+  {
+    "weight_path": "../checkpoint/rtn_Qwen_Qwen2.5-7B-Instruct.pt",
+    "perplexity": 9.499749958803388,
+    "peak_vram_gb": 7.241222656
   }
 ]

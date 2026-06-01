@@ -49,5 +49,14 @@ RTN is the same packing/storage path as AWQ (uint8 INT4, per-group scales + zero
 
 AWQ closes ~0.4 of the 0.85 gap to FP16. Not the full paper number, but the rest of the gap needs invasive changes (module-grouped scales fused into the preceding LayerNorm, per-group weight clipping). At INT4 there's a floor — this is in range.
 
+## Instruct vs base
+
+On base Qwen 2.5 7B, our AWQ run blew up to ~5000 PPL. RTN on the same base model did the same. Spent a lot of time on it. Switched to the Instruct variants and the same code ran cleanly: our AWQ on Qwen 2.5 7B Instruct landed essentially on top of HF's official AWQ-quantized checkpoint for that model. Llama 3.1 8B Instruct also behaved as expected.
+
+Hypothesis (unconfirmed): instruction fine-tuning regularizes the weight distribution — fewer extreme outlier channels, fewer near-constant groups — and that's what INT4 group quantization is sensitive to. Base models, especially Qwen 2.5 which uses heavy pretraining-only mixtures, may have weight groups our `quantize_and_pack` handles badly (e.g. groups where `scale.clamp(min=1e-8)` triggers and the zero-point goes to fp16 inf). Worth checking later; not on the critical path.
+
+**Decision: use Instruct variants for all subsequent quantization experiments.** The base-model failure is a real bug in our path, but the production AWQ packages handle it (HF's checkpoint exists for base too); chasing it would burn the rest of the timeline.
+
+*Another observation*: though we don't know the calibration dataset of AWQ Qwen 2.5 on HF, it still did worse than RTN without any calibration, so it validates our implementation, but also makes the improvement from AWQ feel marginal
 
 ## Experiment 2 (batched decoding)

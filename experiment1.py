@@ -8,18 +8,15 @@ from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm.auto import trange
 
-import awq
+import awq_impl as awq
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--model", default="meta-llama/Meta-Llama-3.1-8B")
+src = parser.add_mutually_exclusive_group(required=True)
+src.add_argument("--model", help="HF model ID for FP16 baseline.")
+src.add_argument("--weight_path", help="Path to saved quant checkpoint (.pt).")
 parser.add_argument("--dataset", default="wikitext-2-raw-v1")
 parser.add_argument("--result_dir", default="results")
-parser.add_argument("--weight_path", default=None, help="Path to saved quant params (.pt).")
-parser.add_argument("--baseline", action="store_true", help="Run FP16 baseline evaluation.")
 args = parser.parse_args()
-
-if not args.baseline and args.weight_path is None:
-    parser.error("Provide --weight_path, --baseline, or both.")
 
 os.makedirs(args.result_dir, exist_ok=True)
 
@@ -56,39 +53,26 @@ def append_result(result):
         json.dump(existing, f, indent=2)
 
 
-tokenizer = AutoTokenizer.from_pretrained(args.model)
-
-if args.baseline:
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch.float16, device_map="cuda")
-    model.eval()
-
-    torch.cuda.reset_peak_memory_stats()
-    ppl_fp16 = compute_perplexity(model, tokenizer)
-    peak_vram_fp16 = torch.cuda.max_memory_allocated() / 1e9
-
-    append_result({"model": args.model, "mode": "fp16", "perplexity": ppl_fp16, "peak_vram_gb": peak_vram_fp16})
-    print(f"[fp16] perplexity={ppl_fp16:.2f}, peak_vram={peak_vram_fp16:.2f}GB")
-
-    del model
-    torch.cuda.empty_cache()
-
-if args.weight_path is not None:
+if args.model:
+    model_id, checkpoint = args.model, None
+else:
     checkpoint = torch.load(args.weight_path, map_location="cuda")
-    quant_params = checkpoint["quant_params"]
-    group_size = checkpoint["group_size"]
-    method = checkpoint.get("method", "awq")  # backward-compat with old checkpoints
-    ckpt_model_id = checkpoint.get("model_id", args.model)
-    if ckpt_model_id != args.model:
-        print(f"checkpoint is for {ckpt_model_id}, overriding --model={args.model}")
+    model_id = checkpoint["model_id"]
 
-    model = AutoModelForCausalLM.from_pretrained(ckpt_model_id, torch_dtype=torch.float16, device_map="cuda")
-    model = awq.replace_with_awq_linear(model, quant_params, group_size=group_size)
-    model.eval()
+tokenizer = AutoTokenizer.from_pretrained(model_id)
+model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="cuda")
+if checkpoint is not None:
+    model = awq.replace_with_awq_linear(model, checkpoint["quant_params"], group_size=checkpoint["group_size"])
+model.eval()
 
-    torch.cuda.reset_peak_memory_stats()
-    ppl_int4 = compute_perplexity(model, tokenizer)
-    peak_vram_int4 = torch.cuda.max_memory_allocated() / 1e9
+torch.cuda.reset_peak_memory_stats()
+ppl = compute_perplexity(model, tokenizer)
+peak_vram = torch.cuda.max_memory_allocated() / 1e9
 
-    mode_label = f"{method}_int4"
-    append_result({"model": args.model, "mode": mode_label, "perplexity": ppl_int4, "peak_vram_gb": peak_vram_int4})
-    print(f"[{mode_label}] perplexity={ppl_int4:.2f}, peak_vram={peak_vram_int4:.2f}GB")
+if checkpoint is None:
+    entry = {"model": model_id, "perplexity": ppl, "peak_vram_gb": peak_vram}
+    print(f"[{model_id}] perplexity={ppl:.2f}, peak_vram={peak_vram:.2f}GB")
+else:
+    entry = {"weight_path": args.weight_path, "perplexity": ppl, "peak_vram_gb": peak_vram}
+    print(f"[{args.weight_path}] perplexity={ppl:.2f}, peak_vram={peak_vram:.2f}GB")
+append_result(entry)

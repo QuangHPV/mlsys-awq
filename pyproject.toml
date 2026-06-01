@@ -1,7 +1,7 @@
 [project]
 name = "awq"
 version = "0.1.0"
-requires-python = "==3.10.*"
+requires-python = "==3.11.*"
 dependencies = [
     "numpy==1.26.4",
     "torch==2.3.0",
@@ -14,10 +14,14 @@ dependencies = [
     "pyarrow>=15",
     "lm-eval",
     "auto-gptq",
+    "autoawq==0.2.5",
     "sentencepiece",
     "huggingface_hub",
     "tqdm>=4.67.3",
 ]
+
+[tool.uv.extra-build-dependencies]
+autoawq = ["torch==2.3.0"]
 
 [[tool.uv.index]]
 name = "tuna"

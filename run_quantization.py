@@ -2,7 +2,7 @@ import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-import awq
+import awq_impl as awq
 import gptq
 
 
@@ -41,7 +41,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True, choices=[
         "Qwen/Qwen2.5-7B",
-        "meta-llama/Meta-Llama-3.1-8B",
+        "Qwen/Qwen2.5-7B-Instruct",
+        "meta-llama/Llama-3.1-8B",
+        "meta-llama/Llama-3.1-8B-Instruct",
     ])
     parser.add_argument("--method", required=True, choices=["awq", "gptq", "rtn"])
     parser.add_argument("--group-size", type=int, default=128)
