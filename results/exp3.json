@@ -1,0 +1,7 @@
+[
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "mmlu": 0.55,
+    "peak_vram_gb": 18.44435456
+  }
+]

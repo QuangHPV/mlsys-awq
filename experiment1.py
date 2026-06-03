@@ -42,7 +42,7 @@ def compute_perplexity(model, tokenizer):
 
 
 def append_result(result):
-    path = os.path.join(args.result_dir, "experiments.json")
+    path = os.path.join(args.result_dir, "exp1.json")
     if os.path.exists(path):
         with open(path) as f:
             existing = json.load(f)

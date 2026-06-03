@@ -111,5 +111,10 @@
     "weight_path": "../checkpoint/rtn_Qwen_Qwen2.5-7B-Instruct.pt",
     "perplexity": 9.499749958803388,
     "peak_vram_gb": 7.241222656
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
+    "perplexity": 9.374149720135375,
+    "peak_vram_gb": 6.435885568
   }
 ]

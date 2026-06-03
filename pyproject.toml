@@ -4,24 +4,34 @@ version = "0.1.0"
 requires-python = "==3.11.*"
 dependencies = [
     "numpy==1.26.4",
-    "torch==2.3.0",
-    "triton==2.3.0",
-    "transformers==4.43.2",
+    "torch==2.5.1",
+    "triton==3.1.0",
+    "transformers>=4.46,<5",
     "accelerate",
     "datasets>=2.20.0",
     "fsspec>=2024.5.0",
     "huggingface_hub>=0.24.0",
     "pyarrow>=15",
     "lm-eval",
-    "auto-gptq",
-    "autoawq==0.2.5",
+    "autoawq",
+    "gptqmodel==4.2.5",
+    "optimum==2.0.0",  # 2.1.0 needs newer gptqmodel API (METHOD + _v2 importer); pin to match 4.2.5
     "sentencepiece",
     "huggingface_hub",
     "tqdm>=4.67.3",
+    "logbar>=0.4.3",
+    "tokenicer>=0.0.13",
+    "device-smi>=0.5.6",
+    "pillow>=12.2.0",
+    "random-word>=1.0.13",
 ]
 
+[tool.uv]
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
 [tool.uv.extra-build-dependencies]
-autoawq = ["torch==2.3.0"]
+autoawq = ["torch==2.5.1"]
+gptqmodel = ["torch==2.5.1", "nvidia-cuda-nvcc-cu12"]
 
 [[tool.uv.index]]
 name = "tuna"
@@ -36,3 +46,8 @@ explicit = true
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu121" }]
 triton = [{ index = "pytorch-cu121" }]
+
+[dependency-groups]
+dev = [
+    "ipykernel>=7.2.0",
+]
