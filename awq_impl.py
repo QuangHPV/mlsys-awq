@@ -5,6 +5,8 @@ import triton.language as tl
 from datasets import load_dataset
 from tqdm.auto import trange, tqdm
 
+from marlin_kernel import MarlinLinear, pack_marlin_weights
+
 # ── Triton dequant-GEMM kernel ────────────────────────────────────────────────
 
 @triton.autotune(
@@ -288,6 +290,42 @@ def replace_with_awq_linear(model, quant_params, group_size=128):
             scales=params["scales"],
             zeros=params["zeros"],
             awq_scale=params["awq_scale"],
+            bias=params["bias"],
+            group_size=group_size,
+        ))
+    return model
+
+
+def convert_quant_params_to_marlin(quant_params):
+    marlin_params = {}
+    for name, params in quant_params.items():
+        w_packed, s_t, z_t = pack_marlin_weights(
+            params["weight_int4"],
+            params["scales"],
+            params["zeros"],
+        )
+        marlin_params[name] = {
+            "weight_int4": w_packed,
+            "scales": s_t,
+            "zeros": z_t,
+            "awq_scale": params["awq_scale"],
+            "bias": params["bias"],
+        }
+    return marlin_params
+
+
+def replace_with_marlin_linear(model, marlin_params, group_size=128):
+    for name, params in marlin_params.items():
+        parts = name.split(".")
+        parent = model
+        for part in parts[:-1]:
+            parent = getattr(parent, part)
+        setattr(parent, parts[-1], MarlinLinear(
+            w=params["weight_int4"],
+            s=params["scales"],
+            z=params["zeros"],
+            awq_scale=params["awq_scale"],
+            perm=None,
             bias=params["bias"],
             group_size=group_size,
         ))

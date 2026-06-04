@@ -16,6 +16,12 @@ src.add_argument("--model", help="HF model ID for FP16 baseline.")
 src.add_argument("--weight_path", help="Path to saved quant checkpoint (.pt).")
 parser.add_argument("--dataset", default="wikitext-2-raw-v1")
 parser.add_argument("--result_dir", default="results")
+parser.add_argument(
+    "--kernel",
+    choices=["awq", "marlin"],
+    default="awq",
+    help="Which quantized kernel to use when loading a checkpoint.",
+)
 args = parser.parse_args()
 
 os.makedirs(args.result_dir, exist_ok=True)
@@ -62,7 +68,16 @@ else:
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="cuda")
 if checkpoint is not None:
-    model = awq.replace_with_awq_linear(model, checkpoint["quant_params"], group_size=checkpoint["group_size"])
+    if args.kernel == "marlin":
+        marlin_params = awq.convert_quant_params_to_marlin(checkpoint["quant_params"])
+        model = awq.replace_with_marlin_linear(
+            model,
+            marlin_params,
+            group_size=checkpoint["group_size"],
+            use_triton=True,
+        )
+    else:
+        model = awq.replace_with_awq_linear(model, checkpoint["quant_params"], group_size=checkpoint["group_size"])
 model.eval()
 
 torch.cuda.reset_peak_memory_stats()

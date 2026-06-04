@@ -1,0 +1,17 @@
+{
+  "custom_awq": {
+    "perplexity": 9.422729513615105,
+    "peak_vram_gb": 7.237211648,
+    "tokens_per_sec": 5.158651646108098
+  },
+  "custom_marlin": {
+    "perplexity": 9.422778207794144,
+    "peak_vram_gb": 6.854418944,
+    "tokens_per_sec": 20.01342848836572
+  },
+  "vllm_awq": {
+    "perplexity": 9.604355688073708,
+    "peak_vram_gb": 71.547537408,
+    "tokens_per_sec": 102.23540719634322
+  }
+}

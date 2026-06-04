@@ -24,6 +24,7 @@ dependencies = [
     "device-smi>=0.5.6",
     "pillow>=12.2.0",
     "random-word>=1.0.13",
+    "vllm"
 ]
 
 [tool.uv]

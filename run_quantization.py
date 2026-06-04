@@ -47,7 +47,7 @@ if __name__ == "__main__":
     ])
     parser.add_argument("--method", required=True, choices=["awq", "gptq", "rtn"])
     parser.add_argument("--group-size", type=int, default=128)
-    parser.add_argument("--save_dir", default="../checkpoint")
+    parser.add_argument("--save_dir", default="./checkpoint")
     args = parser.parse_args()
     os.makedirs(args.save_dir, exist_ok=True)
 
