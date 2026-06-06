@@ -17,25 +17,15 @@ import os
 
 import torch
 from datasets import load_dataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoTokenizer
 from tqdm.auto import trange
 
 from gptqmodel import GPTQModel, QuantizeConfig
 
+from run_quantization import get_calib_data  # __main__ guard there keeps the import side-effect-free
+
 SEQ_LEN = 512
 N_SAMPLES = 40
-
-
-def get_calib_data(tokenizer, n_samples=128, seq_len=512):
-    dataset = load_dataset("wikitext", "wikitext-2-raw-v1", split="train")
-    ids = tokenizer("\n\n".join(dataset["text"]), return_tensors="pt").input_ids[0]
-    samples = []
-    for i in range(n_samples):
-        chunk = ids[i * seq_len:(i + 1) * seq_len]
-        if len(chunk) < seq_len:
-            break
-        samples.append(tokenizer.decode(chunk))
-    return samples
 
 
 def quantize(model_id, save_path, group_size):
@@ -43,7 +33,10 @@ def quantize(model_id, save_path, group_size):
     # desc_act=False to match gptq.py, which does plain GPTQ with no activation reordering.
     quant_config = QuantizeConfig(bits=4, group_size=group_size, desc_act=False)
     model = GPTQModel.load(model_id, quant_config)
-    model.quantize(get_calib_data(tokenizer), batch_size=2)
+    # same pile-val calibration set as run_quantization.py: like-for-like vs. our gptq.py
+    calib = get_calib_data(tokenizer)
+    calib_dataset = [{"input_ids": row, "attention_mask": torch.ones_like(row)} for row in calib]
+    model.quantize(calib_dataset, batch_size=2)
     model.save(save_path)
     tokenizer.save_pretrained(save_path)
     print(f"Saved to {save_path}")
@@ -93,7 +86,8 @@ if __name__ == "__main__":
         quantize(args.model, weight_path, args.group_size)
 
     tokenizer = AutoTokenizer.from_pretrained(weight_path)
-    model = AutoModelForCausalLM.from_pretrained(weight_path, device_map="cuda")
+    # load via gptqmodel so the INT4 dequant kernel is wired; plain HF load skips it
+    model = GPTQModel.load(weight_path).model
     model.eval()
 
     torch.cuda.reset_peak_memory_stats()

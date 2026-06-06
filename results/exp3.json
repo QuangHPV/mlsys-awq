@@ -3,5 +3,17 @@
     "model": "Qwen/Qwen2.5-7B-Instruct",
     "mmlu": 0.55,
     "peak_vram_gb": 18.44435456
+  },
+  {
+    "weight_path": "../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.migrated.pt",
+    "gsm8k": 0.690674753601213,
+    "mmlu": 0.662227602905569,
+    "peak_vram_gb": 21.600664576
+  },
+  {
+    "weight_path": "../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.migrated.pt",
+    "gsm8k": 0.6944655041698257,
+    "mmlu": 0.6623700327588663,
+    "peak_vram_gb": 21.600664576
   }
 ]

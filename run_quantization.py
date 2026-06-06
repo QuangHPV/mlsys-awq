@@ -1,9 +1,25 @@
 import os
 import torch
+from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 import awq_impl as awq
 import gptq
+import kernel
+
+
+def get_calib_data(tokenizer, n_samples=512, seq_len=2048):
+    # pile-val calibration set, shared by AWQ and GPTQ. test_gptq.py imports this
+    # for a like-for-like calib set vs. gptqmodel. Nothing AWQ-specific.
+    dataset = load_dataset("mit-han-lab/pile-val-backup", split="validation")
+    samples = []
+    for item in dataset:
+        enc = tokenizer(item["text"], return_tensors="pt", max_length=seq_len, truncation=True)
+        if enc.input_ids.shape[1] == seq_len:
+            samples.append(enc.input_ids)
+        if len(samples) == n_samples:
+            break
+    return torch.cat(samples, dim=0)
 
 
 def run_quantization(model_id, method, save_path, group_size):
@@ -11,25 +27,29 @@ def run_quantization(model_id, method, save_path, group_size):
     model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="cuda")
 
     if method == "awq":
-        calib_data = awq.get_calib_data(tokenizer)
+        calib_data = get_calib_data(tokenizer)
         act_scales, act_inputs = awq.collect_activation_stats(model, calib_data)
         quant_params = awq.quantize_model(model, act_scales, act_inputs, group_size=group_size)
     elif method == "gptq":
-        calib_data = awq.get_calib_data(tokenizer)
+        calib_data = get_calib_data(tokenizer)
         quant_params = gptq.quantize_model_gptq(model, calib_data, group_size=group_size)
     elif method == "rtn":
         quant_params = awq.quantize_model_rtn(model, group_size=group_size)
     else:
         raise ValueError(f"unknown method: {method}")
 
-    model = awq.replace_with_awq_linear(model, quant_params, group_size=group_size)
+    model = kernel.replace_with_quant_linear(model, quant_params, group_size=group_size)
     print(f"Peak VRAM: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
 
-    cpu_params = {
-        name: {k: v.cpu() if isinstance(v, torch.Tensor) else v for k, v in p.items()}
-        for name, p in quant_params.items()
+    # self-contained checkpoint: INT4 layers + FP16 remainder, so loading needs no original model
+    checkpoint = {
+        "model_id": model_id,
+        "group_size": group_size,
+        "method": method,
+        "quant_layers": list(quant_params.keys()),
+        "state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
     }
-    torch.save({"quant_params": cpu_params, "model_id": model_id, "group_size": group_size, "method": method}, save_path)
+    torch.save(checkpoint, save_path)
     print(f"Saved to {save_path}")
 
     return model, tokenizer
@@ -47,7 +67,7 @@ if __name__ == "__main__":
     ])
     parser.add_argument("--method", required=True, choices=["awq", "gptq", "rtn"])
     parser.add_argument("--group-size", type=int, default=128)
-    parser.add_argument("--save_dir", default="./checkpoint")
+    parser.add_argument("--save_dir", default="../checkpoint")
     args = parser.parse_args()
     os.makedirs(args.save_dir, exist_ok=True)
 

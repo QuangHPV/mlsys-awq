@@ -116,5 +116,25 @@
     "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
     "perplexity": 9.374149720135375,
     "peak_vram_gb": 6.435885568
+  },
+  {
+    "weight_path": "../checkpoint/gptq_meta-llama_Llama-3.1-8B-Instruct.pt",
+    "perplexity": 1989.4636662205662,
+    "peak_vram_gb": 6.76066048
+  },
+  {
+    "weight_path": "../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.migrated.pt",
+    "perplexity": 9.742786164547212,
+    "peak_vram_gb": 6.550946816
+  },
+  {
+    "weight_path": "../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.migrated.pt",
+    "perplexity": 9.742786164547212,
+    "peak_vram_gb": 6.550946816
+  },
+  {
+    "weight_path": "../checkpoint/rtn_meta-llama_Llama-3.1-8B-Instruct.migrated.pt",
+    "perplexity": 10.015833463911763,
+    "peak_vram_gb": 6.550946816
   }
 ]

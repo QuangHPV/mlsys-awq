@@ -1,124 +1,10 @@
 import torch
 import torch.nn as nn
-import triton
-import triton.language as tl
-from datasets import load_dataset
 from tqdm.auto import trange, tqdm
-
-from marlin_kernel import MarlinLinear, pack_marlin_weights
-
-# ── Triton dequant-GEMM kernel ────────────────────────────────────────────────
-
-@triton.autotune(
-    configs=[
-        triton.Config({"BLOCK_M": 16, "BLOCK_N": 64,  "BLOCK_K": 128}, num_warps=4, num_stages=2),
-        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128, "BLOCK_K": 128}, num_warps=8, num_stages=2),
-        triton.Config({"BLOCK_M": 32, "BLOCK_N": 64,  "BLOCK_K": 128}, num_warps=4, num_stages=2),
-        triton.Config({"BLOCK_M": 32, "BLOCK_N": 128, "BLOCK_K": 128}, num_warps=8, num_stages=3),
-        triton.Config({"BLOCK_M": 16, "BLOCK_N": 64,  "BLOCK_K": 256}, num_warps=8, num_stages=3),
-    ],
-    key=["M", "N", "K"],
-)
-@triton.jit
-def _dequant_gemm_kernel(
-    X_ptr, W_ptr, S_ptr, Z_ptr, O_ptr,
-    M, N, K,
-    GROUP_SIZE: tl.constexpr,
-    BLOCK_M: tl.constexpr,
-    BLOCK_N: tl.constexpr,
-    BLOCK_K: tl.constexpr,
-):
-    # which output tile this program owns
-    pid_m = tl.program_id(0)
-    pid_n = tl.program_id(1)
-
-    # row indices into X (shape M×K) and W (shape N×K//2)
-    rm = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
-    rn = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
-    rk = tl.arange(0, BLOCK_K)
-
-    # accumulate in fp32 to avoid precision loss from many fp16 additions
-    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
-
-    for k_start in range(0, K, BLOCK_K):
-        k = k_start + rk
-
-        # load input tile X[rm, k], shape (BLOCK_M, BLOCK_K)
-        x_mask = (rm[:, None] < M) & (k[None, :] < K)
-        x = tl.load(X_ptr + rm[:, None] * K + k[None, :], mask=x_mask, other=0.0)
-
-        # W is stored as uint8 with 2 INT4 values per byte, so column index is k//2
-        w_col = k // 2
-        w_mask = (rn[:, None] < N) & (w_col[None, :] < K // 2)
-        w_packed = tl.load(W_ptr + rn[:, None] * (K // 2) + w_col[None, :], mask=w_mask, other=0)
-
-        # unpack nibbles: even k → low 4 bits, odd k → high 4 bits
-        w_int4 = tl.where(k[None, :] % 2 == 0, w_packed & 0xF, (w_packed >> 4) & 0xF).to(tl.float16)
-
-        # each group of GROUP_SIZE columns shares one scale and zero point
-        g = k // GROUP_SIZE
-        sg_mask = (rn[:, None] < N) & (g[None, :] < K // GROUP_SIZE)
-        scale = tl.load(S_ptr + rn[:, None] * (K // GROUP_SIZE) + g[None, :], mask=sg_mask, other=1.0)
-        zero  = tl.load(Z_ptr + rn[:, None] * (K // GROUP_SIZE) + g[None, :], mask=sg_mask, other=0.0)
-
-        w_fp16 = (w_int4 - zero) * scale
-
-        # tl.dot computes (BLOCK_M, BLOCK_K) x (BLOCK_K, BLOCK_N)
-        # allow_tf32=False: TF32 drops mantissa bits 23→10, which compounds INT4 noise
-        acc += tl.dot(x, tl.trans(w_fp16), allow_tf32=False)
-
-    out_mask = (rm[:, None] < M) & (rn[None, :] < N)
-    tl.store(O_ptr + rm[:, None] * N + rn[None, :], acc.to(tl.float16), mask=out_mask)
-
-
-def dequant_gemm(x, w_int4, scales, zeros, group_size=128):
-    """
-    x:       (M, K)        fp16
-    w_int4:  (N, K//2)     uint8, two INT4 per byte
-    scales:  (N, K//group) fp16
-    zeros:   (N, K//group) fp16
-    returns: (M, N)        fp16
-    """
-    assert x.dtype == torch.float16
-    assert x.is_contiguous() and w_int4.is_contiguous()
-
-    N, K_half = w_int4.shape
-    K = K_half * 2
-
-    # unpack two INT4 per byte: low nibble → even k, high nibble → odd k
-    lo = (w_int4 & 0xF).to(torch.int16)
-    hi = ((w_int4 >> 4) & 0xF).to(torch.int16)
-    w_int = torch.stack([lo, hi], dim=-1).reshape(N, K).float()
-
-    # per-group dequant: (w_int - zero) * scale, broadcast across each group
-    n_groups = K // group_size
-    w_int = w_int.reshape(N, n_groups, group_size)
-    w_fp = (w_int - zeros.float().unsqueeze(-1)) * scales.float().unsqueeze(-1)
-    w_fp = w_fp.reshape(N, K)
-
-    # fp32 accumulate to match what the Triton kernel was doing
-    return (x.float() @ w_fp.t()).to(torch.float16)
-
-
-# ── Calibration & quantization ────────────────────────────────────────────────
-
-def get_calib_data(tokenizer, n_samples=512, seq_len=2048):
-    dataset = load_dataset("mit-han-lab/pile-val-backup", split="validation")
-    samples = []
-    for item in dataset:
-        enc = tokenizer(item["text"], return_tensors="pt", max_length=seq_len, truncation=True)
-        if enc.input_ids.shape[1] == seq_len:
-            samples.append(enc.input_ids)
-        if len(samples) == n_samples:
-            break
-    return torch.cat(samples, dim=0)
 
 
 def collect_activation_stats(model, calib_data, batch_size=2, n_samples_for_loss=512):
-    # per-linear stats from one calibration pass:
-    #   act_scales[name]: (C_in,) per-channel mean |x| — this is s_X in the AWQ paper
-    #   act_inputs[name]: (<=n_samples_for_loss, C_in) cached input rows on CPU,
-    #     used to evaluate output-MSE during the alpha search
+    # returns per-channel mean |x| (s_X in AWQ) and cached inputs for the alpha search
     sums, counts, inputs = {}, {}, {}
     hooks = []
 
@@ -169,8 +55,7 @@ def pseudo_quantize(w, n_bits=4, group_size=128):
 
 
 def search_best_scale(weight, act_scale, act_input, group_size=128, n_grid=20):
-    # AWQ paper Eq. 4: minimise output-reconstruction MSE on calibration inputs
-    #   L(alpha) = || (X / s) @ Q(W * s)^T - X @ W^T ||^2,   s = s_X^alpha
+    # AWQ Eq.4: minimise || (X/s) @ Q(W*s)^T - X @ W^T ||^2 over s = s_X^alpha
     w = weight.float()
     s_x = act_scale.float().to(w.device).clamp(min=1e-4)
     X = act_input.float().to(w.device)
@@ -254,79 +139,3 @@ def quantize_model_rtn(model, group_size=128):
         }
         print(f"quantized {name}")
     return quant_params
-
-
-# ── AWQ linear layer ──────────────────────────────────────────────────────────
-
-class AWQLinear(nn.Module):
-    def __init__(self, w_int4, scales, zeros, awq_scale, bias, group_size=128):
-        super().__init__()
-        self.group_size = group_size
-        self.register_buffer("w_int4", w_int4)
-        self.register_buffer("scales", scales)
-        self.register_buffer("zeros", zeros)
-        # dividing x by awq_scale inverts the per-channel scaling baked into weights
-        self.register_buffer("awq_scale", awq_scale)
-        self.bias = nn.Parameter(bias) if bias is not None else None
-
-    def forward(self, x):
-        orig_shape = x.shape
-        x = x.view(-1, orig_shape[-1]).half()
-        x = x / self.awq_scale.unsqueeze(0)
-        out = dequant_gemm(x, self.w_int4, self.scales, self.zeros, self.group_size)
-        if self.bias is not None:
-            out = out + self.bias
-        return out.view(*orig_shape[:-1], -1)
-
-
-def replace_with_awq_linear(model, quant_params, group_size=128):
-    for name, params in quant_params.items():
-        parts = name.split(".")
-        parent = model
-        for part in parts[:-1]:
-            parent = getattr(parent, part)
-        setattr(parent, parts[-1], AWQLinear(
-            w_int4=params["weight_int4"],
-            scales=params["scales"],
-            zeros=params["zeros"],
-            awq_scale=params["awq_scale"],
-            bias=params["bias"],
-            group_size=group_size,
-        ))
-    return model
-
-
-def convert_quant_params_to_marlin(quant_params):
-    marlin_params = {}
-    for name, params in quant_params.items():
-        w_packed, s_t, z_t = pack_marlin_weights(
-            params["weight_int4"],
-            params["scales"],
-            params["zeros"],
-        )
-        marlin_params[name] = {
-            "weight_int4": w_packed,
-            "scales": s_t,
-            "zeros": z_t,
-            "awq_scale": params["awq_scale"],
-            "bias": params["bias"],
-        }
-    return marlin_params
-
-
-def replace_with_marlin_linear(model, marlin_params, group_size=128):
-    for name, params in marlin_params.items():
-        parts = name.split(".")
-        parent = model
-        for part in parts[:-1]:
-            parent = getattr(parent, part)
-        setattr(parent, parts[-1], MarlinLinear(
-            w=params["weight_int4"],
-            s=params["scales"],
-            z=params["zeros"],
-            awq_scale=params["awq_scale"],
-            perm=None,
-            bias=params["bias"],
-            group_size=group_size,
-        ))
-    return model

@@ -3,5 +3,10 @@
     "weight_path": "../checkpoint/gptqmodel_meta-llama_Llama-3.1-8B-Instruct",
     "perplexity": 161.74154430993312,
     "peak_vram_gb": 6.481069056
+  },
+  {
+    "weight_path": "../checkpoint/gptqmodel_meta-llama_Llama-3.1-8B-Instruct",
+    "perplexity": 376.1103954481277,
+    "peak_vram_gb": 6.481069056
   }
 ]

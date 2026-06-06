@@ -8,7 +8,7 @@ from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm.auto import trange
 
-import awq_impl as awq
+import kernel
 
 parser = argparse.ArgumentParser()
 src = parser.add_mutually_exclusive_group(required=True)
@@ -18,9 +18,9 @@ parser.add_argument("--dataset", default="wikitext-2-raw-v1")
 parser.add_argument("--result_dir", default="results")
 parser.add_argument(
     "--kernel",
-    choices=["awq", "marlin"],
-    default="awq",
-    help="Which quantized kernel to use when loading a checkpoint.",
+    choices=["vanilla", "marlin"],
+    default="marlin",
+    help="Which INT4 kernel to use when loading a checkpoint.",
 )
 args = parser.parse_args()
 
@@ -62,23 +62,15 @@ def append_result(result):
 if args.model:
     model_id, checkpoint = args.model, None
 else:
-    checkpoint = torch.load(args.weight_path, map_location="cuda")
+    checkpoint = torch.load(args.weight_path, map_location="cpu", weights_only=True)
     model_id = checkpoint["model_id"]
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="cuda")
-if checkpoint is not None:
-    if args.kernel == "marlin":
-        marlin_params = awq.convert_quant_params_to_marlin(checkpoint["quant_params"])
-        model = awq.replace_with_marlin_linear(
-            model,
-            marlin_params,
-            group_size=checkpoint["group_size"],
-            use_triton=True,
-        )
-    else:
-        model = awq.replace_with_awq_linear(model, checkpoint["quant_params"], group_size=checkpoint["group_size"])
-model.eval()
+if checkpoint is None:
+    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="cuda")
+    model.eval()
+else:
+    model = kernel.load_quantized_model(checkpoint, kernel=args.kernel)
 
 torch.cuda.reset_peak_memory_stats()
 ppl = compute_perplexity(model, tokenizer)

@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import awq_impl as awq
+import kernel
 
 
 def verify_kernel(group_size=128):
@@ -10,7 +11,7 @@ def verify_kernel(group_size=128):
 
     ref = x @ w.T
     w_int4, scales, zeros = awq.quantize_and_pack(w, group_size=group_size)
-    out = awq.dequant_gemm(x, w_int4, scales, zeros, group_size)
+    out = kernel.dequant_gemm(x, w_int4, scales, zeros, group_size)
 
     max_diff = (out - ref).abs().max().item()
     # cosine sim captures direction error independent of magnitude; expect >0.999 at INT4 group=128

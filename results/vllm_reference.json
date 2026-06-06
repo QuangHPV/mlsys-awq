@@ -1,0 +1,19 @@
+{
+  "vllm_model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+  "batch_1": {
+    "decode_tok_per_s": 89.81153269158409,
+    "total_tokens": 64
+  },
+  "batch_4": {
+    "decode_tok_per_s": 355.587767646255,
+    "total_tokens": 256
+  },
+  "batch_16": {
+    "decode_tok_per_s": 1272.205764187535,
+    "total_tokens": 1024
+  },
+  "batch_32": {
+    "decode_tok_per_s": 2050.4920270514535,
+    "total_tokens": 2048
+  }
+}
