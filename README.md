@@ -59,9 +59,9 @@ Hypothesis (unconfirmed): instruction fine-tuning regularizes the weight distrib
 
 *Another observation*: though we don't know the calibration dataset of AWQ Qwen 2.5 on HF, it still did worse than RTN without any calibration, so it validates our implementation, but also makes the improvement from AWQ feel marginal
 
-## Marlin-style kernel
+## Triton split-K kernel
 
-The fused INT4 GEMM in `kernel.py` (`_marlin_gemm_kernel` + `marlin_gemm`) borrows ideas from two references and deliberately diverges from both where Triton changes the tradeoffs.
+The fused INT4 GEMM in `kernel.py` (`_triton_gemm_kernel` + `triton_gemm`) borrows ideas from two references and deliberately diverges from both where Triton changes the tradeoffs. (It was previously misnamed "marlin"; it shares none of canonical Marlin's hand-written MMA machinery — see "Where we diverge" below.)
 
 **References**
 - Marlin (CUDA): Frantar, Castro, Chen, Hoefler, Alistarh, *MARLIN: Mixed-Precision Auto-Regressive Parallel Inference on LLMs*, [arXiv:2408.11743](https://arxiv.org/abs/2408.11743); code [github.com/IST-DASLab/marlin](https://github.com/IST-DASLab/marlin). Near-ideal 3.87× up to batch 16–32.
@@ -69,7 +69,7 @@ The fused INT4 GEMM in `kernel.py` (`_marlin_gemm_kernel` + `marlin_gemm`) borro
 - Triton split-K mechanics: [split-K tutorial](https://medium.com/@michael.diggin/implementing-a-split-k-matrix-multiplication-kernel-in-triton-7ad93fe4a54c), [`tl.atomic_add` docs](https://triton-lang.org/main/python-api/generated/triton.language.atomic_add.html).
 
 **What we take**
-- **Tiling + transposed scale layout.** Scales/zeros are stored `(n_groups, N)` (`pack_marlin_weights`) so neighbouring programs read neighbouring scale values (coalesced), as Marlin reshuffles scales offline for ideal access.
+- **Tiling + transposed scale layout.** Scales/zeros are stored `(n_groups, N)` (`pack_triton_weights`) so neighbouring programs read neighbouring scale values (coalesced), as Marlin reshuffles scales offline for ideal access.
 - **cp.async + software pipelining — delegated to the compiler, not hand-written.** Marlin issues `cp.async` global→shared copies with double-buffering explicitly. We instead rely on Triton's loop pipeliner: the `num_stages=` field in each `triton.Config` (2–4) tells Triton to prefetch the next K-iterations' tiles via async copies and multi-buffer them while `tl.dot` runs. The async pipeline is exactly the in-loop `tl.load`s + `num_stages`; there is no explicit `cp.async` in our source.
 - **Split-K for the decode regime.** At small M (decode) the data-parallel grid is `(M/BLOCK_M)×(N/BLOCK_N)` ≈ a handful of blocks — too few to fill an A100/H100, the "wave quantization" gap from arXiv:2402.00025 (they measure +61% waves/SM on A100). We add a 3rd grid dimension `SPLIT_K` that partitions the K reduction across more blocks. `_choose_split_k` turns it on only for small M and backs off to 1 for prefill (where the grid already saturates and split-K's reduction is pure overhead — the same large-M degradation the paper reports). The cap of 8 matches their empirical sweet spot (4 on A100, 8 on H100), and our "~2 SM-waves of column tiles" target reproduces those picks for the 4096-wide attention projections.
 - **Large-`BLOCK_M` configs for prefill.** The earlier kernel capped `BLOCK_M` at 32, so for large-M prefill (MMLU) each weight tile was re-loaded and re-dequantized `M/32` times → worse than the pure-PyTorch path that dequantizes once. Adding `BLOCK_M` 64/128 configs lets autotune pick big M-tiles that amortize the fused dequant.
@@ -84,7 +84,7 @@ About the INT4 GEMM *kernels*, not quality (exp1 owns perplexity). The old
 `benchmark.py` labelled runs `custom_awq` / `custom_marlin`, conflating the AWQ
 *method* with the *kernel*, and called `awq_impl` Marlin helpers that no longer
 exist. We now hold the quantized weights fixed and vary only the GEMM: `vanilla`
-(dequant→fp16 matmul) vs `marlin` (fused Triton), via `load_quantized_model`
+(dequant→fp16 matmul) vs `triton` (fused Triton), via `load_quantized_model`
 (which never materialises the FP16 model, so `peak_vram` is honest).
 
 - **`experiment2.py` → `exp2.json`.** End-to-end prefill vs decode latency under
@@ -99,30 +99,30 @@ exist. We now hold the quantized weights fixed and vary only the GEMM: `vanilla`
   matching is fragile, and it still wouldn't touch paged-attn/CUDA-graphs). Used
   Qwen 2.5 7B Instruct AWQ (Llama 3.1 8B has no official AWQ checkpoint on HF).
 
-**Result (A10, Qwen 2.5 7B Instruct): marlin loses to FP16 by ~3.5–3.8×.**
-End-to-end decode tok/s — marlin 8.3 / fp16 31.5 (bs=1) … marlin 223 / fp16 770
-(bs=32). marlin beats vanilla ~3.8×, so it's a fine INT4 kernel; it's just not
+**Result (A10, Qwen 2.5 7B Instruct): triton loses to FP16 by ~3.5–3.8×.**
+End-to-end decode tok/s — triton 8.3 / fp16 31.5 (bs=1) … triton 223 / fp16 770
+(bs=32). triton beats vanilla ~3.8×, so it's a fine INT4 kernel; it's just not
 competitive with cuBLAS. The only win is VRAM (11.8 vs 21.3 GB). Exp4 diagnoses why.
 
 ## Experiment 4 (GEMM roofline / kernel characterization)
 
 `experiment4.py` → `roofline.json` (+`roofline.png`). A synthetic single-GEMM
 microbenchmark (no model/data) that sweeps M (=batch·seq tokens) for
-`{fp16-cuBLAS, vanilla, marlin}`, recording latency, achieved TFLOP/s, GB/s and
+`{fp16-cuBLAS, vanilla, triton}`, recording latency, achieved TFLOP/s, GB/s and
 arithmetic intensity. **Layer shapes are derived from the model config** (not
 hardcoded — the original Llama 4096/14336 shapes were wrong for Qwen's
 3584/18944 + GQA). GPU peaks are *measured* (big matmul + big copy), so the ridge
 point (=peak_compute/peak_bw) is hardware-agnostic.
 
-**Why marlin loses: it's overhead-bound, not memory-bound.** At M=1 (decode,
+**Why triton loses: it's overhead-bound, not memory-bound.** At M=1 (decode,
 attn_qo) FP16 runs at 494 GB/s = 89% of the 557 GB/s peak — bandwidth-saturated,
-as it should be. marlin moves 4× fewer bytes yet runs 2.4× *slower*, at only
+as it should be. triton moves 4× fewer bytes yet runs 2.4× *slower*, at only
 55 GB/s = 10% of peak. It sits at a flat ~0.16 ms floor for all M≤32 (FP16's
 floor is ~0.065 ms). The exp2 profile shows the cause: each `QuantLinear.forward`
 fires ~5 kernels vs FP16's single cuBLAS call — `x/awq_scale` (div),
-`_marlin_gemm_kernel`, `partials.sum(0)` (reduce), `.to(fp16)` (copy), bias-add —
-plus `marlin_gemm` queries `get_device_properties()` and `torch.empty`s the FP32
-split-K partials every call. Even at large M marlin plateaus at ~18 TFLOP/s =
+`_triton_gemm_kernel`, `partials.sum(0)` (reduce), `.to(fp16)` (copy), bias-add —
+plus `triton_gemm` queries `get_device_properties()` and `torch.empty`s the FP32
+split-K partials every call. Even at large M triton plateaus at ~18 TFLOP/s =
 ~24% of the 75 TFLOP/s peak. The roofline says a clean decode kernel could hit
 ~0.017 ms (4× under FP16), so ~10× of headroom is lost to per-call overhead.
 Quantization *can* win at decode; this kernel doesn't yet.
@@ -134,3 +134,34 @@ Still TODO:
 - Comprehensive experiment 3 run (accuracy must stay on our kernel — vLLM would
   measure vLLM's quantization, not ours).
 - Experiment 5: damage control.
+
+# Build logs
+Resolved 214 packages in 10.70s
+  × Failed to build `marlin @ file:///root/mlsys-awq/marlin`
+  ├─▶ The build backend returned an error
+  ╰─▶ Call to `setuptools.build_meta:__legacy__.build_wheel` failed (exit status: 1)
+
+      [stdout]
+      running bdist_wheel
+      running build
+      running build_py
+      creating build/lib.linux-x86_64-cpython-311/marlin
+      copying marlin/__init__.py -> build/lib.linux-x86_64-cpython-311/marlin
+      running build_ext
+
+      [stderr]
+      [marlin/setup.py] pip nvidia-cuda-nvcc-cu12 found ->
+      CUDA_HOME=/root/.cache/uv/builds-v0/.tmphPafZk/lib/python3.11/site-packages/nvidia/cuda_nvcc
+      [marlin/setup.py] nvcc present: False (/root/.cache/uv/builds-v0/.tmphPafZk/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin/nvcc)
+      [marlin/setup.py] WARNING: headers missing in
+      /root/.cache/uv/builds-v0/.tmphPafZk/lib/python3.11/site-packages/nvidia/cuda_nvcc/include: ['cuda.h', 'cuda_runtime.h',
+      'cuda_fp16.h'] -> compile will likely fail; use a full CUDA toolkit (conda install -c nvidia cuda-toolkit, or set CUDA_HOME).
+      /root/.cache/uv/builds-v0/.tmphPafZk/lib/python3.11/site-packages/torch/utils/cpp_extension.py:497: UserWarning: Attempted to use
+      ninja as the BuildExtension backend but we could not find ninja.. Falling back to using the slow distutils backend.
+        warnings.warn(msg.format('we could not find ninja.'))
+      error: [Errno 2] No such file or directory:
+      '/root/.cache/uv/builds-v0/.tmphPafZk/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin/nvcc'
+
+
+hint: `marlin` was included because `awq` (v0.1.0) depends on `marlin`
+hint: Build failures usually indicate a problem with the package or the build environment(awq)

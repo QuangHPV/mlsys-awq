@@ -18,8 +18,8 @@ parser.add_argument("--dataset", default="wikitext-2-raw-v1")
 parser.add_argument("--result_dir", default="results")
 parser.add_argument(
     "--kernel",
-    choices=["vanilla", "marlin"],
-    default="marlin",
+    choices=["vanilla", "triton"],
+    default="triton",
     help="Which INT4 kernel to use when loading a checkpoint.",
 )
 args = parser.parse_args()

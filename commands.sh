@@ -67,7 +67,7 @@ HF_ENDPOINT=https://hf-mirror.com uv run migrate_checkpoint.py --old ../checkpoi
 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
     --model meta-llama/Llama-3.1-8B-Instruct
 
-# our INT4 (marlin kernel) checkpoint on 4 GPUs
+# our INT4 (triton kernel) checkpoint on 4 GPUs
 CUDA_VISIBLE_DEVICES=0,1,2,3 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
     --weight_path ../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.migrated.pt \
     --batch_size 8
@@ -98,13 +98,13 @@ HF_ENDPOINT=https://hf-mirror.com uv run experiment2_vllm.py --vllm_model Qwen/Q
 HF_ENDPOINT=https://hf-mirror.com uv run experiment4.py \
     --weight_path ../checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.migrated.pt --plot
 
-ncu --nvtx --nvtx-include "profile/" -k regex:marlin \
+ncu --nvtx --nvtx-include "profile/" -k regex:triton \
     --section SpeedOfLight --section WarpStateStats --section MemoryWorkloadAnalysis \
-    uv run prof_marlin.py
+    uv run prof_triton.py
 
-ncu --nvtx --nvtx-include "profile/" -k regex:marlin \
+ncu --nvtx --nvtx-include "profile/" -k regex:triton \
     --section SpeedOfLight --section WarpStateStats --section MemoryWorkloadAnalysis \
     --target-processes all \
-    python prof_marlin.py
+    python prof_triton.py
 
 ncu python -c "import torch; print(torch.randn(8, device='cuda').sum())"

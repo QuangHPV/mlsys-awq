@@ -40,7 +40,7 @@ def dequant_gemm(x, w_int4, scales, zeros, group_size=128):
     return (x.float() @ w_fp.t()).to(torch.float16)
 
 
-def pack_marlin_weights(w_int4_awq, scales, zeros, group_size=128):
+def pack_triton_weights(w_int4_awq, scales, zeros, group_size=128):
     # tl.dot handles MMA layout, so we skip the row permutation; only scales/zeros transpose
     N, K_half = w_int4_awq.shape
     K = K_half * 2
@@ -57,9 +57,10 @@ def pack_marlin_weights(w_int4_awq, scales, zeros, group_size=128):
     return w_packed, scales_t, zeros_t
 
 
-# Design notes and divergences from canonical Marlin: see README "Marlin-style kernel".
-# Grid mechanics (L2 swizzle + atomic split-K) follow meta-pytorch/applied-ai's
-# splitk_dequant_gemm.py rather than canonical Marlin.
+# Triton split-K dequant GEMM. Despite the old "marlin" name this is NOT Marlin:
+# no hand-written cp.async/ldmatrix/lop3, no offline row permutation. Grid mechanics
+# (L2 swizzle + atomic split-K) follow meta-pytorch/applied-ai's splitk_dequant_gemm.py;
+# see README "Triton split-K kernel" for the full comparison to canonical Marlin.
 
 @triton.jit
 def _swizzle_tile(pid, M, N, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, GROUP_M: tl.constexpr):
@@ -102,7 +103,7 @@ def _swizzle_tile(pid, M, N, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, GROUP
     reset_to_zero=["O_ptr"],
 )
 @triton.jit
-def _marlin_gemm_kernel(
+def _triton_gemm_kernel(
     X_ptr, W_ptr, S_ptr, Z_ptr, O_ptr,
     M, N, K,
     stride_xm, stride_xk,
@@ -183,7 +184,7 @@ def _choose_split_k(M, N, device, block_n=128, max_split=8):
     return 1
 
 
-def marlin_gemm(x, w_int4, scales, zeros, group_size=128):
+def triton_gemm(x, w_int4, scales, zeros, group_size=128):
     assert x.dtype == torch.float16
     assert x.is_contiguous() and w_int4.is_contiguous()
     M, K = x.shape
@@ -195,7 +196,7 @@ def marlin_gemm(x, w_int4, scales, zeros, group_size=128):
     out = torch.zeros((M, N), device=x.device, dtype=torch.float32)
     grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]) * triton.cdiv(N, meta["BLOCK_N"]), split_k)
 
-    _marlin_gemm_kernel[grid](
+    _triton_gemm_kernel[grid](
         x, w_int4, scales, zeros, out,
         M, N, K,
         x.stride(0), x.stride(1),
@@ -207,6 +208,22 @@ def marlin_gemm(x, w_int4, scales, zeros, group_size=128):
     return out.to(torch.float16)
 
 
+def marlin_gemm(x, B, s, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=8):
+    """Canonical Marlin FP16xINT4 GEMM via the compiled `marlin_cuda` extension
+    (built from ./marlin by `uv sync`).
+
+    x: (M,K) fp16 row-major. B, s, workspace must be in Marlin's packed layout
+    (see marlin.Layer.pack); workspace is a zeroed int32 tensor of >= N//128 * max_par.
+    Symmetric only for now — no AWQ zero-point, so numerics are wrong until the zp port.
+    """
+    import marlin_cuda  # lazy: keeps the vanilla/triton paths usable without the build
+    M = x.shape[0]
+    N = s.shape[1]
+    C = torch.empty((M, N), dtype=torch.float16, device=x.device)
+    marlin_cuda.mul(x, B, C, s, workspace, thread_k, thread_n, sms, max_par)
+    return C
+
+
 def _get_parent(model, name):
     parts = name.split(".")
     parent = model
@@ -215,16 +232,16 @@ def _get_parent(model, name):
     return parent, parts[-1]
 
 
-_GEMM = {"vanilla": dequant_gemm, "marlin": marlin_gemm}
+_GEMM = {"vanilla": dequant_gemm, "triton": triton_gemm}
 
 
 class QuantLinear(nn.Module):
     """INT4 linear, dispatched to one of the GEMM kernels by `kernel`:
 
     - "vanilla": dequantize the weight then a plain fp16 matmul (dequant_gemm).
-    - "marlin":  fused Marlin-style Triton GEMM (marlin_gemm).
+    - "triton":  fused Triton split-K GEMM (triton_gemm).
 
-    The only layout difference is scales/zeros: marlin stores them transposed
+    The only layout difference is scales/zeros: triton stores them transposed
     ([n_groups, out]) so the kernel reads them with coalesced strides; vanilla
     keeps them [out, n_groups].
     """
@@ -244,7 +261,7 @@ class QuantLinear(nn.Module):
     def empty(cls, in_features, out_features, bias, group_size=128, kernel="vanilla", device="meta"):
         # skeleton with correctly-shaped buffers, to be filled by load_state_dict(assign=True)
         n_groups = in_features // group_size
-        sz_shape = (n_groups, out_features) if kernel == "marlin" else (out_features, n_groups)
+        sz_shape = (n_groups, out_features) if kernel == "triton" else (out_features, n_groups)
         return cls(
             w_int4=torch.empty(out_features, in_features // 2, dtype=torch.uint8, device=device),
             scales=torch.empty(*sz_shape, dtype=torch.float16, device=device),
@@ -258,6 +275,7 @@ class QuantLinear(nn.Module):
     def forward(self, x):
         orig_shape = x.shape
         x = x.reshape(-1, orig_shape[-1]).half()
+        # AWQ scale done before W4A16 GEMM
         x = x / self.awq_scale.unsqueeze(0)
         out = _GEMM[self.kernel](x, self.w_int4, self.scales, self.zeros, self.group_size)
         if self.bias is not None:
@@ -267,7 +285,7 @@ class QuantLinear(nn.Module):
 
 def replace_with_quant_linear(model, quant_params, group_size=128):
     """For migration/initial quantization saving"""
-    # builds the quantized model in vanilla layout; load_quantized_model repacks to marlin
+    # builds the quantized model in vanilla layout; load_quantized_model repacks to triton
     for name, params in quant_params.items():
         parent, attr = _get_parent(model, name)
         setattr(parent, attr, QuantLinear(
@@ -303,11 +321,11 @@ def load_quantized_model(checkpoint, kernel="vanilla", device="cuda"):
     with init_empty_weights():
         model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.float16)
 
-    if kernel == "marlin":
-        # checkpoints store the vanilla INT4 layout; repack into the Marlin layout
+    if kernel == "triton":
+        # checkpoints store the vanilla INT4 layout; repack into the triton layout
         state_dict = dict(state_dict)
         for name in quant_layers:
-            w, s, z = pack_marlin_weights(
+            w, s, z = pack_triton_weights(
                 state_dict[f"{name}.w_int4"],
                 state_dict[f"{name}.scales"],
                 state_dict[f"{name}.zeros"],

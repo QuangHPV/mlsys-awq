@@ -40,7 +40,7 @@ def load_model(args, device):
         model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.float16, device_map=device)
         model.eval()
     else:
-        model = kernel.load_quantized_model(checkpoint, kernel="marlin", device=device)
+        model = kernel.load_quantized_model(checkpoint, kernel="triton", device=device)
     return model, tokenizer
 
 

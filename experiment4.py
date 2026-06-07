@@ -83,14 +83,14 @@ def gemm_roofline(shapes, m_values):
         torch.manual_seed(0)
         w = torch.randn(N, K, device=DEVICE, dtype=torch.float16) * 0.1
         w_int4, scales, zeros = awq_impl.quantize_and_pack(w, group_size=GROUP)
-        w_m, s_m, z_m = kernel.pack_marlin_weights(w_int4, scales, zeros, GROUP)
+        w_m, s_m, z_m = kernel.pack_triton_weights(w_int4, scales, zeros, GROUP)
 
         for M in tqdm(m_values, desc=f"GEMM roofline ({shape_name})", leave=False):
             x = torch.randn(M, K, device=DEVICE, dtype=torch.float16)
             kernels = {
                 "fp16": (lambda: torch.matmul(x, w.t()), "fp16"),
                 "vanilla": (lambda: kernel.dequant_gemm(x, w_int4, scales, zeros, GROUP), "int4"),
-                "marlin": (lambda: kernel.marlin_gemm(x, w_m, s_m, z_m, GROUP), "int4"),
+                "triton": (lambda: kernel.triton_gemm(x, w_m, s_m, z_m, GROUP), "int4"),
             }
             for kname, (fn, wdtype) in kernels.items():
                 t = bench(fn)
@@ -130,7 +130,7 @@ def plot_roofline(results, path):
     fig, ax = plt.subplots(figsize=(7, 5))
     xs = [2 ** i for i in range(-2, 12)]
     ax.plot(xs, [min(peak_tflops, peak_bw * x / 1e3) for x in xs], "k--", label="roofline")
-    markers = {"fp16": "o", "vanilla": "s", "marlin": "^"}
+    markers = {"fp16": "o", "vanilla": "s", "triton": "^"}
     for kname in markers:
         pts = [(r["intensity"], r["tflops"]) for r in results["gemm_roofline"]
                if r["kernel"] == kname and r["shape"] == "mlp_gate_up"]

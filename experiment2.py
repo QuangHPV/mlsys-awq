@@ -100,7 +100,7 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    configs = [("marlin", "marlin"), ("vanilla", "vanilla")]
+    configs = [("triton", "triton"), ("vanilla", "vanilla")]
     if not args.skip_baseline:
         configs.append(("fp16_baseline", None))
 
@@ -117,7 +117,7 @@ def main():
         e2e[label] = {"by_batch": [measure_prefill_decode(model, tokenizer, b, args.prompt_len, args.decode_tokens)
                                    for b in tqdm(batch_sweep, desc=f"Prefill/Decode ({label})")]}
         e2e[label]["peak_vram_gb"] = torch.cuda.max_memory_allocated() / 1e9
-        if kname == "marlin":  # profile the kernel we care about, once, to its own file
+        if kname == "triton":  # profile the kernel we care about, once, to its own file
             profile_path = os.path.join(args.result_dir, "exp2_profile.json")
             with open(profile_path, "w") as f:
                 json.dump(profile_step(model, tokenizer, args.prompt_len), f, indent=2)

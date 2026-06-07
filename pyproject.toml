@@ -26,6 +26,7 @@ dependencies = [
     "random-word>=1.0.13",
     "vllm==0.7.3",
     "matplotlib>=3.10.9",
+    "marlin",  # vendored canonical Marlin CUDA kernel (./marlin), built from source
 ]
 
 [tool.uv]
@@ -34,6 +35,7 @@ environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 [tool.uv.extra-build-dependencies]
 autoawq = ["torch==2.5.1"]
 gptqmodel = ["torch==2.5.1", "nvidia-cuda-nvcc-cu12"]
+marlin = ["torch==2.5.1", "numpy==1.26.4", "nvidia-cuda-nvcc-cu12"]  # torch+numpy+nvcc to compile the .cu
 
 [[tool.uv.index]]
 name = "tuna"
@@ -48,6 +50,7 @@ explicit = true
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu121" }]
 triton = [{ index = "pytorch-cu121" }]
+marlin = { path = "marlin" }
 
 [dependency-groups]
 dev = [
