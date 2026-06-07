@@ -1,7 +1,14 @@
+import functools
+
 import torch
 import torch.nn as nn
 import triton
 import triton.language as tl
+
+
+@functools.lru_cache(maxsize=None)
+def _sm_count(device):
+    return torch.cuda.get_device_properties(device).multi_processor_count
 
 
 def dequant_gemm(x, w_int4, scales, zeros, group_size=128):
@@ -51,6 +58,22 @@ def pack_marlin_weights(w_int4_awq, scales, zeros, group_size=128):
 
 
 # Design notes and divergences from canonical Marlin: see README "Marlin-style kernel".
+# Grid mechanics (L2 swizzle + atomic split-K) follow meta-pytorch/applied-ai's
+# splitk_dequant_gemm.py rather than canonical Marlin.
+
+@triton.jit
+def _swizzle_tile(pid, M, N, BLOCK_M: tl.constexpr, BLOCK_N: tl.constexpr, GROUP_M: tl.constexpr):
+    # walk the (m, n) tile grid in GROUP_M-row super-blocks so neighbouring CTAs
+    # reuse the same activation rows in L2 (applied-ai swizzle_tile)
+    grid_m = tl.cdiv(M, BLOCK_M)
+    grid_n = tl.cdiv(N, BLOCK_N)
+    width = GROUP_M * grid_n
+    group_id = pid // width
+    group_size = tl.minimum(grid_m - group_id * GROUP_M, GROUP_M)
+    pid_m = group_id * GROUP_M + (pid % group_size)
+    pid_n = (pid % width) // group_size
+    return pid_m, pid_n
+
 
 @triton.autotune(
     configs=[
@@ -60,6 +83,13 @@ def pack_marlin_weights(w_int4_awq, scales, zeros, group_size=128):
         triton.Config({"BLOCK_M": 16, "BLOCK_N": 64,  "BLOCK_K": 128}, num_warps=4, num_stages=2),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 128, "BLOCK_K": 64},  num_warps=8, num_stages=3),
         triton.Config({"BLOCK_M": 32, "BLOCK_N": 128, "BLOCK_K": 128}, num_warps=8, num_stages=3),
+        # decode is weight-load-bound at ~9% BW: small BLOCK_K + deep pipeline keeps
+        # more INT4 loads in flight to hide global latency (dequant stalls load->dot).
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128, "BLOCK_K": 32}, num_warps=4, num_stages=5),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 256, "BLOCK_K": 32}, num_warps=8, num_stages=5),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 256, "BLOCK_K": 64}, num_warps=8, num_stages=4),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 64,  "BLOCK_K": 64}, num_warps=4, num_stages=6),
+        triton.Config({"BLOCK_M": 16, "BLOCK_N": 128, "BLOCK_K": 64}, num_warps=8, num_stages=6),
         # large BLOCK_M: prefill / large-M regime (big M-tiles maximise weight reuse)
         triton.Config({"BLOCK_M": 64,  "BLOCK_N": 64,  "BLOCK_K": 128}, num_warps=4, num_stages=3),
         triton.Config({"BLOCK_M": 64,  "BLOCK_N": 128, "BLOCK_K": 64},  num_warps=8, num_stages=3),
@@ -67,6 +97,9 @@ def pack_marlin_weights(w_int4_awq, scales, zeros, group_size=128):
         triton.Config({"BLOCK_M": 128, "BLOCK_N": 128, "BLOCK_K": 64},  num_warps=8, num_stages=3),
     ],
     key=["M", "N", "K", "GROUP_SIZE"],
+    # the kernel atomic_adds into O_ptr; autotune benchmarks each config many times,
+    # so the output must be re-zeroed between trials or it accumulates to fp16-inf.
+    reset_to_zero=["O_ptr"],
 )
 @triton.jit
 def _marlin_gemm_kernel(
@@ -75,19 +108,25 @@ def _marlin_gemm_kernel(
     stride_xm, stride_xk,
     stride_wn, stride_wk,
     stride_sg, stride_sn,
-    stride_ok, stride_om, stride_on,
+    stride_om, stride_on,
     GROUP_SIZE: tl.constexpr,
     SPLIT_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
     BLOCK_M: tl.constexpr,
     BLOCK_N: tl.constexpr,
     BLOCK_K: tl.constexpr,
 ):
-    pid_m = tl.program_id(0)
-    pid_n = tl.program_id(1)
-    pid_k = tl.program_id(2)  # which K-slice this program reduces (0..SPLIT_K-1)
+    tl.static_assert(GROUP_SIZE % BLOCK_K == 0)  # each k-block lies within one quant group
+
+    pid = tl.program_id(0)  # flattened (m, n) tile id, swizzled below for L2 reuse
+    pid_k = tl.program_id(1)  # which K-slice this program reduces (0..SPLIT_K-1)
+
+    pid_m, pid_n = _swizzle_tile(pid, M, N, BLOCK_M, BLOCK_N, GROUP_M)
 
     offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
+    offs_am = tl.max_contiguous(tl.multiple_of(offs_m, BLOCK_M), BLOCK_M)
+    offs_bn = tl.max_contiguous(tl.multiple_of(offs_n, BLOCK_N), BLOCK_N)
 
     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
 
@@ -97,48 +136,45 @@ def _marlin_gemm_kernel(
         offs_k = ki * BLOCK_K + tl.arange(0, BLOCK_K)
 
         x = tl.load(
-            X_ptr + offs_m[:, None] * stride_xm + offs_k[None, :] * stride_xk,
-            mask=(offs_m[:, None] < M) & (offs_k[None, :] < K),
+            X_ptr + offs_am[:, None] * stride_xm + offs_k[None, :] * stride_xk,
+            mask=(offs_am[:, None] < M) & (offs_k[None, :] < K),
             other=0.0,
         ).to(tl.float16)
 
         w_col = offs_k // 2
         w_packed = tl.load(
-            W_ptr + offs_n[:, None] * stride_wn + w_col[None, :] * stride_wk,
-            mask=(offs_n[:, None] < N) & (w_col[None, :] < K // 2),
+            W_ptr + offs_bn[:, None] * stride_wn + w_col[None, :] * stride_wk,
+            mask=(offs_bn[:, None] < N) & (w_col[None, :] < K // 2),
             other=0,
         )
         w_int = tl.where(offs_k[None, :] % 2 == 0, w_packed & 0xF, (w_packed >> 4) & 0xF).to(tl.float16)
 
-        g = offs_k // GROUP_SIZE
-        sg_mask = (offs_n[:, None] < N) & (g[None, :] < (K // GROUP_SIZE))
+        # whole k-block sits in one group (static_assert above), so scale/zero are
+        # (BLOCK_N,) vectors, not redundant (BLOCK_N, BLOCK_K) tiles reloaded per k.
+        g = (ki * BLOCK_K) // GROUP_SIZE
+        sz_mask = offs_bn < N
+        scale = tl.load(S_ptr + g * stride_sg + offs_bn * stride_sn, mask=sz_mask, other=1.0).to(tl.float16)
+        zero = tl.load(Z_ptr + g * stride_sg + offs_bn * stride_sn, mask=sz_mask, other=0.0).to(tl.float16)
 
-        scale = tl.load(
-            S_ptr + g[None, :] * stride_sg + offs_n[:, None] * stride_sn,
-            mask=sg_mask, other=1.0,
-        ).to(tl.float16)
-        zero = tl.load(
-            Z_ptr + g[None, :] * stride_sg + offs_n[:, None] * stride_sn,
-            mask=sg_mask, other=0.0,
-        ).to(tl.float16)
-
-        w_fp16 = (w_int - zero) * scale
+        w_fp16 = (w_int - zero[:, None]) * scale[:, None]
 
         acc = tl.dot(x, tl.trans(w_fp16), acc=acc, allow_tf32=False)
 
-    # each pid_k writes its own FP32 partial plane; marlin_gemm sums them
-    tl.store(
-        O_ptr + pid_k * stride_ok + offs_m[:, None] * stride_om + offs_n[None, :] * stride_on,
-        acc,
-        mask=(offs_m[:, None] < M) & (offs_n[None, :] < N),
-    )
+    # split-K partials reduce in place into one FP32 plane via atomic_add; with
+    # SPLIT_K==1 each element is written once, so a plain store suffices.
+    o_ptrs = O_ptr + offs_m[:, None] * stride_om + offs_n[None, :] * stride_on
+    o_mask = (offs_m[:, None] < M) & (offs_n[None, :] < N)
+    if SPLIT_K == 1:
+        tl.store(o_ptrs, acc, mask=o_mask)
+    else:
+        tl.atomic_add(o_ptrs, acc, mask=o_mask, sem="release")
 
 
 def _choose_split_k(M, N, device, block_n=128, max_split=8):
     # split-K only helps at small M where the grid can't fill the SMs; cap 8 per arXiv:2402.00025
     if M > 64:
         return 1
-    n_sms = torch.cuda.get_device_properties(device).multi_processor_count
+    n_sms = _sm_count(device)
     col_tiles = max(1, N // block_n)
     target = (2 * n_sms) // col_tiles  # aim for ~2 SM-waves of column tiles
     for p in (max_split, 4, 2):
@@ -154,20 +190,21 @@ def marlin_gemm(x, w_int4, scales, zeros, group_size=128):
     N = w_int4.shape[0]
 
     split_k = _choose_split_k(M, N, x.device)
-    # one FP32 (M, N) partial plane per K-slice; each element written once, then summed
-    partials = torch.empty((split_k, M, N), device=x.device, dtype=torch.float32)
-    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]), triton.cdiv(N, meta["BLOCK_N"]), split_k)
+    # single FP32 plane: split-K programs accumulate into it via atomic_add (zeroed
+    # because atomic_add reads-modifies-writes). L2-swizzled 1D (m, n) grid.
+    out = torch.zeros((M, N), device=x.device, dtype=torch.float32)
+    grid = lambda meta: (triton.cdiv(M, meta["BLOCK_M"]) * triton.cdiv(N, meta["BLOCK_N"]), split_k)
 
     _marlin_gemm_kernel[grid](
-        x, w_int4, scales, zeros, partials,
+        x, w_int4, scales, zeros, out,
         M, N, K,
         x.stride(0), x.stride(1),
         w_int4.stride(0), w_int4.stride(1),
         scales.stride(0), scales.stride(1),
-        partials.stride(0), partials.stride(1), partials.stride(2),
-        GROUP_SIZE=group_size, SPLIT_K=split_k,
+        out.stride(0), out.stride(1),
+        GROUP_SIZE=group_size, SPLIT_K=split_k, GROUP_M=8,
     )
-    return partials.sum(0).to(torch.float16)
+    return out.to(torch.float16)
 
 
 def _get_parent(model, name):
@@ -229,6 +266,7 @@ class QuantLinear(nn.Module):
 
 
 def replace_with_quant_linear(model, quant_params, group_size=128):
+    """For migration/initial quantization saving"""
     # builds the quantized model in vanilla layout; load_quantized_model repacks to marlin
     for name, params in quant_params.items():
         parent, attr = _get_parent(model, name)

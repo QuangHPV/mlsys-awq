@@ -97,3 +97,14 @@ HF_ENDPOINT=https://hf-mirror.com uv run experiment2_vllm.py --vllm_model Qwen/Q
 # Experiment 4 - GEMM roofline
 HF_ENDPOINT=https://hf-mirror.com uv run experiment4.py \
     --weight_path ../checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.migrated.pt --plot
+
+ncu --nvtx --nvtx-include "profile/" -k regex:marlin \
+    --section SpeedOfLight --section WarpStateStats --section MemoryWorkloadAnalysis \
+    uv run prof_marlin.py
+
+ncu --nvtx --nvtx-include "profile/" -k regex:marlin \
+    --section SpeedOfLight --section WarpStateStats --section MemoryWorkloadAnalysis \
+    --target-processes all \
+    python prof_marlin.py
+
+ncu python -c "import torch; print(torch.randn(8, device='cuda').sum())"
