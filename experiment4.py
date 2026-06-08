@@ -77,6 +77,46 @@ def gemm_bytes(M, N, K, dtype):
     return act + out + w
 
 
+def vllm_marlin_runner(w):
+    """Production W4A16 speed ceiling: vLLM's Marlin GEMM on weight w (N, K).
+
+    gptq_marlin_gemm is vLLM's *unified* Marlin kernel (GPTQ + AWQ both route through
+    it); we feed marlin_quantize's symmetric packing, so this measures the kernel's
+    speed ceiling, not our AWQ numerics. The signature is vLLM-version-sensitive:
+    returns None (kernel skipped) if vLLM isn't importable or the trial call fails."""
+    try:
+        from vllm import _custom_ops as ops
+        from vllm.scalar_type import scalar_types
+        from vllm.model_executor.layers.quantization.utils.marlin_utils import (
+            GPTQ_MARLIN_MAX_PARALLEL, GPTQ_MARLIN_MIN_THREAD_N,
+        )
+        from vllm.model_executor.layers.quantization.utils.marlin_utils_test import (
+            MarlinWorkspace, marlin_quantize,
+        )
+    except Exception:
+        return None
+
+    N, K = w.shape
+    quant_type = scalar_types.uint4b8
+    try:
+        _, q_w, s, _, sort_indices, _ = marlin_quantize(w.t().contiguous(), quant_type, GROUP, act_order=False)
+        workspace = MarlinWorkspace(N, GPTQ_MARLIN_MIN_THREAD_N, GPTQ_MARLIN_MAX_PARALLEL)
+        g_idx = torch.empty(0, dtype=torch.int32, device=w.device)
+        b_zeros = torch.empty(0, dtype=torch.int32, device=w.device)
+
+        def run(x):
+            return ops.gptq_marlin_gemm(
+                x, q_w, s, b_zeros, g_idx, sort_indices, workspace.scratch,
+                quant_type, x.shape[0], N, K, True, False, True, False,
+            )
+
+        run(torch.zeros(16, K, device=w.device, dtype=torch.float16))  # trial: signature mismatch -> skip
+        torch.cuda.synchronize()
+        return run
+    except Exception:
+        return None
+
+
 def gemm_roofline(shapes, m_values):
     results = []
     for shape_name, (N, K) in shapes.items():
@@ -84,7 +124,8 @@ def gemm_roofline(shapes, m_values):
         w = torch.randn(N, K, device=DEVICE, dtype=torch.float16) * 0.1
         w_int4, scales, zeros = awq_impl.quantize_and_pack(w, group_size=GROUP)
         w_m, s_m, z_m = kernel.pack_triton_weights(w_int4, scales, zeros, GROUP)
-        marlin_packed = kernel.pack_marlin_weights(w_int4, scales, zeros, GROUP)
+        marlin_packed = kernel.pack_marlin_from_int4(w_int4, scales, zeros, GROUP)
+        vllm_run = vllm_marlin_runner(w)
 
         for M in tqdm(m_values, desc=f"GEMM roofline ({shape_name})", leave=False):
             x = torch.randn(M, K, device=DEVICE, dtype=torch.float16)
@@ -96,6 +137,8 @@ def gemm_roofline(shapes, m_values):
             if marlin_packed is not None:
                 B, s, z, ws = marlin_packed
                 kernels["marlin"] = (lambda: kernel.marlin_gemm(x, B, s, z, ws), "int4")
+            if vllm_run is not None:
+                kernels["vllm"] = (lambda: vllm_run(x), "int4")
             for kname, (fn, wdtype) in kernels.items():
                 t = bench(fn)
                 flops = 2 * M * N * K
@@ -134,7 +177,7 @@ def plot_roofline(results, path):
     fig, ax = plt.subplots(figsize=(7, 5))
     xs = [2 ** i for i in range(-2, 12)]
     ax.plot(xs, [min(peak_tflops, peak_bw * x / 1e3) for x in xs], "k--", label="roofline")
-    markers = {"fp16": "o", "vanilla": "s", "triton": "^"}
+    markers = {"fp16": "o", "vanilla": "s", "triton": "^", "marlin": "D", "vllm": "*"}
     for kname in markers:
         pts = [(r["intensity"], r["tflops"]) for r in results["gemm_roofline"]
                if r["kernel"] == kname and r["shape"] == "mlp_gate_up"]
@@ -171,8 +214,8 @@ def main():
     m_values = [int(m) for m in args.m_sweep.split(",")]
     results["gemm_roofline"] = gemm_roofline(shapes, m_values)
     results["roofline_ridge"] = ridge_crossing(results["gemm_roofline"], peak_tflops, peak_bw)
-    print(f"  ridge at {results['roofline_ridge']['ridge_intensity_flop_per_byte']:.1f} FLOP/byte; "
-          f"compute-bound onset (M): {results['roofline_ridge']['first_compute_bound_M']}")
+    print(f"\tridge at {results['roofline_ridge']['ridge_intensity_flop_per_byte']:.1f} FLOP/byte;\n"
+          f"\tcompute-bound onset (M):\n{json.dumps(results['roofline_ridge']['first_compute_bound_M'], indent=4)}")
 
     out_path = os.path.join(args.result_dir, "exp4.json")
     with open(out_path, "w") as f:

@@ -11,8 +11,8 @@ scrambled and the asserts fail (cosine ≈ 0); if they pass, the layout is fine.
 Speed target (perf, higher = better):  dequant < FP16 < triton < marlin <= vLLM.
 triton > FP16 is xfail (our split-K kernel doesn't beat dense cuBLAS); the vendored
 canonical-Marlin CUDA kernel is expected to beat both FP16 and triton at low batch.
-Marlin's correctness vs our AWQ reference is xfail until the zero-point port (it's
-symmetric only today); the marlin/vLLM checks skip if those kernels aren't built.
+Marlin now matches the AWQ reference (asymmetric zero point ported); the marlin/vLLM
+checks skip if those kernels aren't built.
 """
 import functools
 import time
@@ -198,10 +198,8 @@ def test_triton_slower_than_vllm(M, N, K):
         f"{(M, N, K)}: triton {t['triton'] * 1e3:.3f}ms unexpectedly beat vLLM {t['vllm'] * 1e3:.3f}ms"
 
 
-# --- vendored canonical Marlin (CUDA): symmetric today, AWQ zero-point port pending ---
+# --- vendored canonical Marlin (CUDA): asymmetric AWQ zero point ported ---
 
-@pytest.mark.xfail(reason="marlin is symmetric; mismatches the asymmetric AWQ reference "
-                          "until the zero-point port", strict=False)
 @pytest.mark.parametrize("M,N,K", SHAPES)
 def test_marlin_matches_reference(M, N, K):
     x, _, w_int4, scales, zeros = make_case(M, N, K)
@@ -211,7 +209,7 @@ def test_marlin_matches_reference(M, N, K):
     B, s, z, ws = packed
     ref = dequant_reference(x, w_int4, scales, zeros)
     cos = cosine(kernel.marlin_gemm(x, B, s, z, ws), ref)
-    print(f"marlin cos {(M, N, K)}: {cos:.4f}")  # visible with -s, even on xfail
+    print(f"marlin cos {(M, N, K)}: {cos:.4f}")  # visible with -s
     assert cos > 0.999, f"{(M, N, K)}: marlin diverges from AWQ reference (cos={cos:.4f})"
 
 
