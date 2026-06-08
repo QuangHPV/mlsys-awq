@@ -84,6 +84,7 @@ def gemm_roofline(shapes, m_values):
         w = torch.randn(N, K, device=DEVICE, dtype=torch.float16) * 0.1
         w_int4, scales, zeros = awq_impl.quantize_and_pack(w, group_size=GROUP)
         w_m, s_m, z_m = kernel.pack_triton_weights(w_int4, scales, zeros, GROUP)
+        marlin_packed = kernel.pack_marlin_weights(w_int4, scales, zeros, GROUP)
 
         for M in tqdm(m_values, desc=f"GEMM roofline ({shape_name})", leave=False):
             x = torch.randn(M, K, device=DEVICE, dtype=torch.float16)
@@ -92,6 +93,9 @@ def gemm_roofline(shapes, m_values):
                 "vanilla": (lambda: kernel.dequant_gemm(x, w_int4, scales, zeros, GROUP), "int4"),
                 "triton": (lambda: kernel.triton_gemm(x, w_m, s_m, z_m, GROUP), "int4"),
             }
+            if marlin_packed is not None:
+                B, s, z, ws = marlin_packed
+                kernels["marlin"] = (lambda: kernel.marlin_gemm(x, B, s, z, ws), "int4")
             for kname, (fn, wdtype) in kernels.items():
                 t = bench(fn)
                 flops = 2 * M * N * K

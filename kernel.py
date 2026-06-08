@@ -208,22 +208,33 @@ def triton_gemm(x, w_int4, scales, zeros, group_size=128):
     return out.to(torch.float16)
 
 
-# TODO: accept zero point
-def marlin_gemm(x, B, s, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=8):
-    """Canonical Marlin FP16xINT4 GEMM via the compiled `marlin_cuda` extension
-    (built from ./marlin by `uv sync`).
-
-    x: (M,K) fp16 row-major. B, s, workspace must be in Marlin's packed layout
-    (see marlin.Layer.pack); workspace is a zeroed int32 tensor of >= N//128 * max_par.
-    Symmetric only for now — no AWQ zero-point, so numerics are wrong until the zp port.
-    """
-    import marlin_cuda  # lazy: keeps the vanilla/triton paths usable without the build
+def marlin_gemm(x, B, s, z, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=8):
+    """Canonical Marlin FP16xINT4 GEMM via the compiled `marlin_cuda` extension."""
+    from marlin import marlin_cuda
     M = x.shape[0]
     N = s.shape[1]
     C = torch.empty((M, N), dtype=torch.float16, device=x.device)
-    # TODO: pass in zero points
-    marlin_cuda.mul(x, B, C, s, workspace, thread_k, thread_n, sms, max_par)
+    marlin_cuda.mul(x, B, C, s, z, workspace, thread_k, thread_n, sms, max_par)
     return C
+
+
+def pack_marlin_from_int4(w_int4, scales, zeros, group_size=128):
+    """Adapt our AWQ INT4 weights (N, K//2) to Marlin's packer: unpack the nibbles to
+    an integer (K, N) weight, then permute+bitpack via marlin.pack_marlin_weights.
+    Returns (B, s, z, workspace), or None if the shape violates Marlin alignment."""
+    from marlin import pack_marlin_weights  # lazy: pulls in the compiled marlin_cuda
+    N, K_half = w_int4.shape
+    K = K_half * 2
+    if N % 256 or K % 128:
+        return None
+    lo = (w_int4 & 0xF).to(torch.int32)
+    hi = ((w_int4 >> 4) & 0xF).to(torch.int32)
+    w = torch.stack([lo, hi], dim=-1).reshape(N, K).t().contiguous()  # (K, N) integers
+    B, s, z = pack_marlin_weights(w, scales, zeros, K, N, group_size)
+    # dequant now returns the raw nibble (no fused -8), so the kernel needs the real
+    # AWQ zero point: (nibble - z) * s. pack_marlin_weights already lays z out like s.
+    workspace = torch.zeros(N // 128 * 16, dtype=torch.int, device=w_int4.device)
+    return B, s, z, workspace
 
 
 def _get_parent(model, name):
@@ -235,6 +246,28 @@ def _get_parent(model, name):
 
 
 _GEMM = {"vanilla": dequant_gemm, "triton": triton_gemm}
+
+
+class MarlinLinear(nn.Module):
+    """Drop-in for QuantLinear when kernel="marlin"; B/s/z/workspace in Marlin packed layout."""
+
+    def __init__(self, B, s, z, workspace, awq_scale, bias):
+        super().__init__()
+        self.register_buffer("B", B)
+        self.register_buffer("s", s)
+        self.register_buffer("z", z)
+        self.register_buffer("workspace", workspace)
+        self.register_buffer("awq_scale", awq_scale)
+        self.bias = nn.Parameter(bias) if bias is not None else None
+
+    def forward(self, x):
+        orig_shape = x.shape
+        x = x.reshape(-1, orig_shape[-1]).half()
+        x = x / self.awq_scale.unsqueeze(0)
+        out = marlin_gemm(x, self.B, self.s, self.z, self.workspace)
+        if self.bias is not None:
+            out = out + self.bias
+        return out.view(*orig_shape[:-1], -1)
 
 
 class QuantLinear(nn.Module):
@@ -322,6 +355,30 @@ def load_quantized_model(checkpoint, kernel="vanilla", device="cuda"):
     config = AutoConfig.from_pretrained(model_id)
     with init_empty_weights():
         model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.float16)
+
+    if kernel == "marlin":
+        for name in quant_layers:
+            packed = pack_marlin_from_int4(
+                state_dict[f"{name}.w_int4"],
+                state_dict[f"{name}.scales"],
+                state_dict[f"{name}.zeros"],
+                group_size,
+            )
+            if packed is None:
+                raise RuntimeError(f"{name}: Marlin requires outfeatures%256==0 and infeatures%128==0")
+            B, s, z, ws = packed
+            parent, attr = _get_parent(model, name)
+            setattr(parent, attr, MarlinLinear(
+                B, s, z, ws,
+                awq_scale=state_dict[f"{name}.awq_scale"],
+                bias=state_dict.get(f"{name}.bias"),
+            ))
+        quant_prefixes = tuple(f"{n}." for n in quant_layers)
+        nq_sd = {k: v for k, v in state_dict.items() if not k.startswith(quant_prefixes)}
+        model.load_state_dict(nq_sd, assign=True, strict=False)
+        model.tie_weights()
+        model.eval()
+        return model.to(device)
 
     if kernel == "triton":
         # checkpoints store the vanilla INT4 layout; repack into the triton layout

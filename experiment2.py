@@ -100,7 +100,7 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    configs = [("triton", "triton"), ("vanilla", "vanilla")]
+    configs = [("triton", "triton"), ("vanilla", "vanilla"), ("marlin", "marlin")]
     if not args.skip_baseline:
         configs.append(("fp16_baseline", None))
 

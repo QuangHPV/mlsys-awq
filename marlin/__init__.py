@@ -18,10 +18,10 @@ import torch
 import torch.nn as nn
 
 
-import marlin_cuda
+from . import marlin_cuda
 
 # TODO: update signature
-def mul(A, B, C, s, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=16):
+def mul(A, B, C, s, z, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=16):
     """Marlin FP16xINT4 multiply; can be used within `torch.compile`.
     @A: `torch.half` input matrix of shape `(m, k)` in standard row-major layout
     @B: `torch.int` weight matrix of original shape `(k, n)` in Marlin format; see `Layer.pack()`
@@ -33,7 +33,7 @@ def mul(A, B, C, s, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=16):
     @sms: number of SMs to use for the kernel (can usually be left as auto -1)
     @max_par: maximum number of batch 64 problems to solve in parallel for large input sizes
     """
-    marlin_cuda.mul(A, B, C, s, workspace, thread_k, thread_n, sms, max_par)
+    marlin_cuda.mul(A, B, C, s, z, workspace, thread_k, thread_n, sms, max_par)
 
 
 # Precompute permutations for Marlin weight and scale shuffling 
@@ -92,41 +92,73 @@ class Layer(nn.Module):
         self.groupsize = groupsize
         self.register_buffer('B', torch.empty((self.k // 16, self.n * 16 // 8), dtype=torch.int))
         self.register_buffer('s', torch.empty((self.k // groupsize, self.n), dtype=torch.half))
+        self.register_buffer('z', torch.empty((self.k // groupsize, self.n), dtype=torch.half)) # AWQ
         # 128 is currently the minimum `tile_n`, hence it gives the maximum workspace size; 16 is the default `max_par`
         self.register_buffer('workspace', torch.zeros(self.n // 128 * 16, dtype=torch.int), persistent=False)
 
     def forward(self, A):
         C = torch.empty(A.shape[:-1] + (self.s.shape[1],), dtype=A.dtype, device=A.device)
-        mul(A.view((-1, A.shape[-1])), self.B, C.view((-1, C.shape[-1])), self.s, self.workspace)
+        mul(A.view((-1, A.shape[-1])), self.B, C.view((-1, C.shape[-1])), self.s, self.z, self.workspace)
         return C
 
-    def pack(self, linear, scales):
+    def pack(self, linear, scales, z_points):
+        """Quantize a fake-quantized fp16 linear to integer weights, then delegate the
+        permute+bitpack to pack_marlin_weights. See `_pack` for the original fused
+        reference (identical output)."""
+        if linear.weight.dtype != torch.half:
+            raise ValueError('Only `torch.half` weights are supported.')
+        maxq = 2 ** 4 - 1
+        s = scales.t()
+        z = z_points.t()
+        w = linear.weight.data.t()
+        if self.groupsize != self.k:
+            w = w.reshape((-1, self.groupsize, self.n)).permute(1, 0, 2).reshape((self.groupsize, -1))
+            s = s.reshape((1, -1))
+            z = z.reshape((1, -1))
+        w = torch.round(w / s).int()
+        w += z.int()
+        w = torch.clamp(w, 0, maxq)
+        if self.groupsize != self.k:
+            w = w.reshape((self.groupsize, -1, self.n)).permute(1, 0, 2).reshape((self.k, self.n)).contiguous()
+        B, s, z = pack_marlin_weights(w, scales, z_points, self.k, self.n, self.groupsize)
+        self.B[:, :] = B.to(self.B.device)
+        self.s[:, :] = s.to(self.s.device)
+        self.z[:, :] = z.to(self.s.device)
+
+    # TODO: add zero point. Original fused fp16->Marlin packer, kept for reference;
+    # pack() now reproduces this exactly via pack_marlin_weights.
+    def _pack(self, linear, scales, z_points):
         """Pack a fake-quantized linear layer into this actual Marlin representation.
         @linear: fake-quantized `torch.nn.Linear` layer to convert (must be of type `torch.half`)
         @scales: corresponding quantization scales of shape `(infeatures, groups)`
-        """ 
+        """
         if linear.weight.dtype != torch.half:
             raise ValueError('Only `torch.half` weights are supported.')
         tile = 16
         maxq = 2 ** 4 - 1
         s = scales.t()
+        z = z_points.t() # AWQ
         w = linear.weight.data.t()
         if self.groupsize != self.k:
             w = w.reshape((-1, self.groupsize, self.n))
             w = w.permute(1, 0, 2)
             w = w.reshape((self.groupsize, -1))
             s = s.reshape((1, -1))
+            z = z.reshape((1, -1)) # AWQ
         w = torch.round(w / s).int()
-        w += (maxq + 1) // 2
+        w += z.int() # AWQ?
         w = torch.clamp(w, 0, maxq)
         if self.groupsize != self.k:
             w = w.reshape((self.groupsize, -1, self.n))
             w = w.permute(1, 0, 2)
             w = w.reshape((self.k, self.n)).contiguous()
             s = s.reshape((-1, len(_scale_perm)))[:, _scale_perm]
+            z = z.reshape((-1, len(_scale_perm)))[:, _scale_perm] # AWQ
         else:
             s = s.reshape((-1, len(_scale_perm_single)))[:, _scale_perm_single]
+            z = z.reshape((-1, len(_scale_perm_single)))[:, _scale_perm_single] # AWQ
         s = s.reshape((-1, self.n)).contiguous()
+        z = z.reshape((-1, self.n)).contiguous() # AWQ
         w = w.reshape((self.k // tile, tile, self.n // tile, tile))
         w = w.permute((0, 2, 1, 3))
         w = w.reshape((self.k // tile, self.n * tile))
@@ -139,6 +171,42 @@ class Layer(nn.Module):
         q = torch.from_numpy(q.astype(np.int32)).to(w.device)
         self.B[:, :] = q.to(self.B.device)
         self.s[:, :] = s.to(self.s.device)
+        self.z[:, :] = z.to(self.s.device) # AWQ
+
+
+def pack_marlin_weights(w, scales, z_points, k, n, groupsize):
+    """Permute + bitpack an already-integer-quantized weight into Marlin's layout.
+
+    @w: integer weight of shape (k, n), values in [0, 15] (Marlin's round(w/s)+z)
+    @scales, @z_points: per-group fp16 scales/zeros of shape (n, k//groupsize)
+    Returns (B, s, z). This is the back half of `Layer._pack`, lifted verbatim;
+    callers produce `w` their own way -- Layer.pack by quantizing fp16, the INT4
+    load path by unpacking nibbles -- so no fp16 dequant->requant round-trip is forced.
+    """
+    tile = 16
+    s = scales.t()
+    z = z_points.t()
+    if groupsize != k:
+        s = s.reshape((1, -1))
+        z = z.reshape((1, -1))
+        s = s.reshape((-1, len(_scale_perm)))[:, _scale_perm]
+        z = z.reshape((-1, len(_scale_perm)))[:, _scale_perm]
+    else:
+        s = s.reshape((-1, len(_scale_perm_single)))[:, _scale_perm_single]
+        z = z.reshape((-1, len(_scale_perm_single)))[:, _scale_perm_single]
+    s = s.reshape((-1, n)).contiguous()
+    z = z.reshape((-1, n)).contiguous()
+    w = w.reshape((k // tile, tile, n // tile, tile))
+    w = w.permute((0, 2, 1, 3))
+    w = w.reshape((k // tile, n * tile))
+    res = w
+    res = res.reshape((-1, _perm.numel()))[:, _perm].reshape(res.shape)
+    q = np.zeros((res.shape[0], res.shape[1] // 8), dtype=np.uint32)
+    res = res.cpu().numpy().astype(np.uint32)
+    for i in range(8):
+        q |= res[:, i::8] << 4 * i
+    q = torch.from_numpy(q.astype(np.int32)).to(w.device)
+    return q, s, z
 
 
 def replace_linear(module, name_filter=lambda n: True, groupsize=-1, name=''):

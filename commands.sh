@@ -98,6 +98,7 @@ HF_ENDPOINT=https://hf-mirror.com uv run experiment2_vllm.py --vllm_model Qwen/Q
 HF_ENDPOINT=https://hf-mirror.com uv run experiment4.py \
     --weight_path ../checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.migrated.pt --plot
 
+# Kernel building
 ncu --nvtx --nvtx-include "profile/" -k regex:triton \
     --section SpeedOfLight --section WarpStateStats --section MemoryWorkloadAnalysis \
     uv run prof_triton.py
@@ -111,3 +112,5 @@ ncu python -c "import torch; print(torch.randn(8, device='cuda').sum())"
 
 python -c "import torch; print(torch.version.cuda)"   # 12.4 — unchanged, expected
 CUDA_HOME=/usr/local/cuda-12.9 TORCH_CUDA_ARCH_LIST=8.6 MAX_JOBS=$(nproc) uv sync
+CUDA_HOME=/usr/local/cuda-12.9 TORCH_CUDA_ARCH_LIST=8.6 MAX_JOBS=$(nproc) uv sync --reinstall-package marlin
+CUDA_HOME=/usr/local/cuda-12.9 TORCH_CUDA_ARCH_LIST=8.6 MAX_JOBS=$(nproc) python setup.py build_ext --inplace

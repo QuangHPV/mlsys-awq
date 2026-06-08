@@ -221,7 +221,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.24.0" },
     { name = "lm-eval" },
     { name = "logbar", specifier = ">=0.4.3" },
-    { name = "marlin", directory = "marlin" },
+    { name = "marlin", editable = "marlin" },
     { name = "matplotlib", specifier = ">=3.10.9" },
     { name = "numpy", specifier = "==1.26.4" },
     { name = "optimum", specifier = "==2.0.0" },
@@ -1099,7 +1099,7 @@ wheels = [
 [[package]]
 name = "marlin"
 version = "0.1.1"
-source = { directory = "marlin" }
+source = { editable = "marlin" }
 dependencies = [
     { name = "numpy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },

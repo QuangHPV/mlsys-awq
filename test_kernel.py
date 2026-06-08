@@ -19,7 +19,6 @@ import time
 
 import pytest
 import torch
-import torch.nn as nn
 
 import awq_impl
 import kernel
@@ -138,44 +137,6 @@ def _vllm_marlin_callable(x, w):
         return None
 
 
-def _marlin_callable(x, w):
-    """No-arg callable running the vendored canonical Marlin GEMM on (x, w), or None
-    if the `marlin_cuda` extension isn't built / the shape is unsupported.
-
-    Packs w with a *symmetric* 4-bit grid (Marlin's only mode today), so numerics
-    differ from our asymmetric AWQ pipeline — the correctness test is xfail. We pack
-    the actual w (not random) so the speed comparison runs on a realistic layout.
-    Needs `marlin`/`marlin_cuda` installed (built by `uv sync`).
-    """
-    try:
-        import marlin
-    except Exception:
-        return None
-    N, K = w.shape
-    if N % 256 or K % 128:  # marlin.Layer requires outfeatures%256, infeatures%128
-        return None
-
-    maxq, gs = 15, GROUP
-    wt = w.t().contiguous()  # (K, N)
-    wg = wt.reshape((-1, gs, N)).permute(1, 0, 2).reshape((gs, -1))
-    s = torch.max(torch.abs(wg), dim=0, keepdim=True)[0] * (2.0 / maxq)
-    q = torch.clamp(torch.round(wg / s).int() + (maxq + 1) // 2, 0, maxq)
-    ref = (q - (maxq + 1) // 2).half() * s
-    ref = ref.reshape((gs, -1, N)).permute(1, 0, 2).reshape((K, N)).contiguous()
-    s = s.reshape((-1, N)).contiguous()
-
-    try:
-        linear = nn.Linear(K, N, bias=False, dtype=torch.half, device=x.device)
-        linear.weight.data = ref.t().contiguous()
-        layer = marlin.Layer(K, N, gs).to(x.device)
-        layer.pack(linear, s.t())
-        run = lambda: kernel.marlin_gemm(x, layer.B, layer.s, layer.workspace)
-        run()  # trial now so a build/shape error -> skip, not a benched crash
-        torch.cuda.synchronize()
-        return run
-    except Exception:
-        return None
-
 
 _HEADER_PRINTED = False
 _COLS = ["dequant", "fp16", "triton", "marlin", "vllm"]
@@ -201,9 +162,10 @@ def _timings(M, N, K):
         "fp16": bench(lambda: torch.matmul(x, w.t())),
         "triton": bench(lambda: kernel.triton_gemm(x, w_m, s_m, z_m, GROUP)),
     }
-    mfn = _marlin_callable(x, w)
-    if mfn is not None:
-        t["marlin"] = bench(mfn)
+    packed = kernel.pack_marlin_from_int4(w_int4, scales, zeros, GROUP)
+    if packed is not None:
+        B, s, z, ws = packed
+        t["marlin"] = bench(lambda: kernel.marlin_gemm(x, B, s, z, ws))
     vfn = _vllm_marlin_callable(x, w)
     if vfn is not None:
         t["vllm"] = bench(vfn)
@@ -242,12 +204,14 @@ def test_triton_slower_than_vllm(M, N, K):
                           "until the zero-point port", strict=False)
 @pytest.mark.parametrize("M,N,K", SHAPES)
 def test_marlin_matches_reference(M, N, K):
-    x, w, w_int4, scales, zeros = make_case(M, N, K)
-    mfn = _marlin_callable(x, w)
-    if mfn is None:
-        pytest.skip("marlin_cuda extension not built")
+    x, _, w_int4, scales, zeros = make_case(M, N, K)
+    packed = kernel.pack_marlin_from_int4(w_int4, scales, zeros, GROUP)
+    if packed is None:
+        pytest.skip("marlin_cuda extension not built or shape unsupported")
+    B, s, z, ws = packed
     ref = dequant_reference(x, w_int4, scales, zeros)
-    cos = cosine(mfn(), ref)
+    cos = cosine(kernel.marlin_gemm(x, B, s, z, ws), ref)
+    print(f"marlin cos {(M, N, K)}: {cos:.4f}")  # visible with -s, even on xfail
     assert cos > 0.999, f"{(M, N, K)}: marlin diverges from AWQ reference (cos={cos:.4f})"
 
 

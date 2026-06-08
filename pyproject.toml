@@ -50,7 +50,7 @@ explicit = true
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu121" }]
 triton = [{ index = "pytorch-cu121" }]
-marlin = { path = "marlin" }
+marlin = { path = "marlin", editable = true }
 
 [dependency-groups]
 dev = [
