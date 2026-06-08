@@ -91,12 +91,15 @@ CUDA_VISIBLE_DEVICES=0 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
 
 # Experiment 2: Prefil/decode latency
 HF_ENDPOINT=https://hf-mirror.com uv run experiment2.py \
-    --weight_path ../checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.migrated.pt
+    --weight_path ../checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.migrated.pt \
+    --vllm_model Qwen/Qwen2.5-7B-Instruct-AWQ
 HF_ENDPOINT=https://hf-mirror.com uv run experiment2_vllm.py --vllm_model Qwen/Qwen2.5-7B-Instruct-AWQ
 
 # Experiment 4 - GEMM roofline
 HF_ENDPOINT=https://hf-mirror.com uv run experiment4.py \
     --weight_path ../checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.migrated.pt --plot
+
+uv run experiment4.py --plot_only --plot --plot_mode line
 
 # Kernel building
 ncu --nvtx --nvtx-include "profile/" -k regex:triton \

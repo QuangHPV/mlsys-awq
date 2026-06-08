@@ -5,39 +5,40 @@
     "prompt_len": 512,
     "decode_tokens": 64,
     "batch_sweep": "1,4,16,32",
-    "skip_baseline": false
+    "skip_baseline": false,
+    "vllm_model": "Qwen/Qwen2.5-7B-Instruct-AWQ"
   },
   "device": "NVIDIA A10",
   "e2e": {
-    "marlin": {
+    "triton": {
       "by_batch": [
         {
           "batch_size": 1,
-          "prefill_s": 0.4189855679869652,
-          "prefill_tok_per_s": 1221.999131043885,
-          "decode_s_per_step": 0.368267887737602,
-          "decode_tok_per_s": 2.7154146025148935
+          "prefill_s": 0.411424420773983,
+          "prefill_tok_per_s": 1244.4569990201637,
+          "decode_s_per_step": 0.20194901630748063,
+          "decode_tok_per_s": 4.9517448427549375
         },
         {
           "batch_size": 4,
-          "prefill_s": 1.7404083386063576,
-          "prefill_tok_per_s": 1176.735341109632,
-          "decode_s_per_step": 0.3741267005680129,
-          "decode_tok_per_s": 10.691565167434062
+          "prefill_s": 1.5485371202230453,
+          "prefill_tok_per_s": 1322.538525718398,
+          "decode_s_per_step": 0.2043672630097717,
+          "decode_tok_per_s": 19.572606400315408
         },
         {
           "batch_size": 16,
-          "prefill_s": 7.333726838231087,
-          "prefill_tok_per_s": 1117.030969478532,
-          "decode_s_per_step": 0.3099335498409346,
-          "decode_tok_per_s": 51.623969099865405
+          "prefill_s": 6.5871143862605095,
+          "prefill_tok_per_s": 1243.6401616293444,
+          "decode_s_per_step": 0.20670801668893546,
+          "decode_tok_per_s": 77.40386781455892
         },
         {
           "batch_size": 32,
-          "prefill_s": 14.794392697513103,
-          "prefill_tok_per_s": 1107.4466073050842,
-          "decode_s_per_step": 0.14111296914052218,
-          "decode_tok_per_s": 226.76866764906615
+          "prefill_s": 13.153778597712517,
+          "prefill_tok_per_s": 1245.573648536948,
+          "decode_s_per_step": 0.21864574635401368,
+          "decode_tok_per_s": 146.3554655583748
         }
       ],
       "peak_vram_gb": 11.767717376
@@ -46,67 +47,121 @@
       "by_batch": [
         {
           "batch_size": 1,
-          "prefill_s": 1.0280537530779839,
-          "prefill_tok_per_s": 498.0284333062124,
-          "decode_s_per_step": 0.46629657747689635,
-          "decode_tok_per_s": 2.1445578807610852
+          "prefill_s": 1.1046345010399818,
+          "prefill_tok_per_s": 463.5017279633821,
+          "decode_s_per_step": 0.5757422585738823,
+          "decode_tok_per_s": 1.7368883126227475
         },
         {
           "batch_size": 4,
-          "prefill_s": 3.0157160237431526,
-          "prefill_tok_per_s": 679.1090354250236,
-          "decode_s_per_step": 0.475053564296104,
-          "decode_tok_per_s": 8.420103122322377
+          "prefill_s": 3.078437961637974,
+          "prefill_tok_per_s": 665.2724613980206,
+          "decode_s_per_step": 0.5873025642940775,
+          "decode_tok_per_s": 6.810799480856851
         },
         {
           "batch_size": 16,
-          "prefill_s": 10.855992063879967,
-          "prefill_tok_per_s": 754.6062996173703,
-          "decode_s_per_step": 0.48001746751833707,
-          "decode_tok_per_s": 33.332120355367664
+          "prefill_s": 10.860936924815178,
+          "prefill_tok_per_s": 754.2627359599921,
+          "decode_s_per_step": 0.5930798612535,
+          "decode_tok_per_s": 26.97781706191019
         },
         {
           "batch_size": 32,
-          "prefill_s": 20.728697925806046,
-          "prefill_tok_per_s": 790.4017926568777,
-          "decode_s_per_step": 0.4827736858278513,
-          "decode_tok_per_s": 66.28364581455386
+          "prefill_s": 20.321045070886612,
+          "prefill_tok_per_s": 806.2577462353496,
+          "decode_s_per_step": 0.5976249447558075,
+          "decode_tok_per_s": 53.54528836321475
         }
       ],
       "peak_vram_gb": 11.76709888
+    },
+    "marlin": {
+      "by_batch": [
+        {
+          "batch_size": 1,
+          "prefill_s": 0.14813771843910217,
+          "prefill_tok_per_s": 3456.2433213825802,
+          "decode_s_per_step": 0.031599532812833786,
+          "decode_tok_per_s": 31.6460374880562
+        },
+        {
+          "batch_size": 4,
+          "prefill_s": 0.6206351220607758,
+          "prefill_tok_per_s": 3299.8454763561535,
+          "decode_s_per_step": 0.0321421172702685,
+          "decode_tok_per_s": 124.44730900474951
+        },
+        {
+          "batch_size": 16,
+          "prefill_s": 2.4197677299380302,
+          "prefill_tok_per_s": 3385.4489001759666,
+          "decode_s_per_step": 0.032996960799209774,
+          "decode_tok_per_s": 484.8931420491058
+        },
+        {
+          "batch_size": 32,
+          "prefill_s": 4.999219559133053,
+          "prefill_tok_per_s": 3277.311549573401,
+          "decode_s_per_step": 0.03282457136083394,
+          "decode_tok_per_s": 974.8794477231829
+        }
+      ],
+      "peak_vram_gb": 11.767844352
     },
     "fp16_baseline": {
       "by_batch": [
         {
           "batch_size": 1,
-          "prefill_s": 0.14308969676494598,
-          "prefill_tok_per_s": 3578.175169670423,
-          "decode_s_per_step": 0.0317846949910745,
-          "decode_tok_per_s": 31.461683061008173
+          "prefill_s": 0.14228080213069916,
+          "prefill_tok_per_s": 3598.517806567303,
+          "decode_s_per_step": 0.03639582893811166,
+          "decode_tok_per_s": 27.475675899576952
         },
         {
           "batch_size": 4,
-          "prefill_s": 0.5313149243593216,
-          "prefill_tok_per_s": 3854.587752206568,
-          "decode_s_per_step": 0.03322450793348253,
-          "decode_tok_per_s": 120.39305466940975
+          "prefill_s": 0.535877600312233,
+          "prefill_tok_per_s": 3821.768252314928,
+          "decode_s_per_step": 0.03747285099234432,
+          "decode_tok_per_s": 106.74394645918981
         },
         {
           "batch_size": 16,
-          "prefill_s": 1.9976736083626747,
-          "prefill_tok_per_s": 4100.7699985155705,
-          "decode_s_per_step": 0.03661421639844775,
-          "decode_tok_per_s": 436.98873207834964
+          "prefill_s": 2.0112517327070236,
+          "prefill_tok_per_s": 4073.085366083967,
+          "decode_s_per_step": 0.04188835434615612,
+          "decode_tok_per_s": 381.96773899923426
         },
         {
           "batch_size": 32,
-          "prefill_s": 4.012619622051716,
-          "prefill_tok_per_s": 4083.118148044793,
-          "decode_s_per_step": 0.04159576946403831,
-          "decode_tok_per_s": 769.3090045531109
+          "prefill_s": 4.076448254287243,
+          "prefill_tok_per_s": 4019.1850792583414,
+          "decode_s_per_step": 0.04721847246401012,
+          "decode_tok_per_s": 677.7008727758056
         }
       ],
       "peak_vram_gb": 21.28440064
     }
+  },
+  "vllm_reference": {
+    "model": "Qwen/Qwen2.5-7B-Instruct-AWQ",
+    "by_batch": [
+      {
+        "batch_size": 1,
+        "decode_tok_per_s": 79.2608473124758
+      },
+      {
+        "batch_size": 4,
+        "decode_tok_per_s": 315.6001764288227
+      },
+      {
+        "batch_size": 16,
+        "decode_tok_per_s": 1138.3452939487267
+      },
+      {
+        "batch_size": 32,
+        "decode_tok_per_s": 1867.803736255624
+      }
+    ]
   }
 }
