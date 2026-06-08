@@ -20,6 +20,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_runtime.h>
 
+// TODO: update signature
 int marlin_cuda(
   const void* A,
   const void* B,
@@ -41,6 +42,7 @@ int marlin_cuda(
 const int ERR_PROB_SHAPE = 1;
 const int ERR_KERN_SHAPE = 2;
 
+// TODO: update signature
 void mul(
   const torch::Tensor& A,
   const torch::Tensor& B,
@@ -61,6 +63,8 @@ void mul(
   if (workspace.numel() < prob_n / 128 * max_par)
     AT_ERROR("workspace must be of size at least ", prob_n / 128 * max_par, ".");
   int dev = A.get_device();
+
+  // TODO: update call
   int err = marlin_cuda(
     A.data_ptr(),
     B.data_ptr(),

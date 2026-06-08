@@ -152,7 +152,6 @@ __device__ inline FragB dequant(int q) {
 }
 
 // Multiply dequantized values by the corresponding quantization scale; used only for grouped quantization.
-// TODO: add zero point shift
 __device__ inline void scale(FragB& frag_b, FragS& frag_s, int i) {
   half2 s = __half2half2(reinterpret_cast<__half*>(&frag_s)[i]);
   frag_b[0] = __hmul2(frag_b[0], s);
@@ -404,7 +403,6 @@ __global__ void Marlin(
         B_ptr[i] += b_gl_rd_delta_o;
       }
       // Only fetch scales if this tile starts a new group
-      // TODO: fetch zero point additionally
       if (group_blocks != -1 && pipe % (group_blocks / thread_k_blocks) == 0) {
         int4* sh_s_stage = sh_s + s_sh_stage * pipe;
         if (s_sh_wr_pred)
@@ -429,7 +427,6 @@ __global__ void Marlin(
     // It may seem inefficient that we reload the groups for every sub-tile; however, this does not seem to be a
     // significant bottleneck, while some theoretically better attempts have lead to bad instruction ordering by the
     // compiler and correspondingly a noticable drop in performance.
-    // TODO: fetch to register
     if (group_blocks != -1) {
       int4* sh_s_stage = sh_s + s_sh_stage * ((group_blocks / thread_k_blocks) * (pipe / (group_blocks / thread_k_blocks)));
       reinterpret_cast<int4*>(&frag_s[k % 2])[0] = sh_s_stage[s_sh_rd];
@@ -451,7 +448,6 @@ __global__ void Marlin(
       int b_quant_shift = b_quant >> 8;
       FragB frag_b0 = dequant(b_quant);
       // If there are no groups, we can just scale the final output once and can avoid doing so for each weight.
-      // TODO: scale and shift
       if (group_blocks != -1)
         scale(frag_b0, frag_s[k % 2][j], 0);
       FragB frag_b1 = dequant(b_quant_shift);

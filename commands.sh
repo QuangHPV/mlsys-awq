@@ -108,3 +108,6 @@ ncu --nvtx --nvtx-include "profile/" -k regex:triton \
     python prof_triton.py
 
 ncu python -c "import torch; print(torch.randn(8, device='cuda').sum())"
+
+python -c "import torch; print(torch.version.cuda)"   # 12.4 — unchanged, expected
+CUDA_HOME=/usr/local/cuda-12.9 TORCH_CUDA_ARCH_LIST=8.6 MAX_JOBS=$(nproc) uv sync

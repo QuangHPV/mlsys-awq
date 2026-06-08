@@ -20,6 +20,7 @@ import torch.nn as nn
 
 import marlin_cuda
 
+# TODO: update signature
 def mul(A, B, C, s, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=16):
     """Marlin FP16xINT4 multiply; can be used within `torch.compile`.
     @A: `torch.half` input matrix of shape `(m, k)` in standard row-major layout

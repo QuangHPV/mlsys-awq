@@ -208,6 +208,7 @@ def triton_gemm(x, w_int4, scales, zeros, group_size=128):
     return out.to(torch.float16)
 
 
+# TODO: accept zero point
 def marlin_gemm(x, B, s, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=8):
     """Canonical Marlin FP16xINT4 GEMM via the compiled `marlin_cuda` extension
     (built from ./marlin by `uv sync`).
@@ -220,6 +221,7 @@ def marlin_gemm(x, B, s, workspace, thread_k=-1, thread_n=-1, sms=-1, max_par=8)
     M = x.shape[0]
     N = s.shape[1]
     C = torch.empty((M, N), dtype=torch.float16, device=x.device)
+    # TODO: pass in zero points
     marlin_cuda.mul(x, B, C, s, workspace, thread_k, thread_n, sms, max_par)
     return C
 
