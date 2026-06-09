@@ -12,31 +12,21 @@ def _sm_count(device):
 
 
 def dequant_gemm(x, w_int4, scales, zeros, group_size=128):
-    """
-    x:       (M, K)        fp16
-    w_int4:  (N, K//2)     uint8, two INT4 per byte
-    scales:  (N, K//group) fp16
-    zeros:   (N, K//group) fp16
-    returns: (M, N)        fp16
-    """
     assert x.dtype == torch.float16
     assert x.is_contiguous() and w_int4.is_contiguous()
 
     N, K_half = w_int4.shape
     K = K_half * 2
 
-    # unpack two INT4 per byte: low nibble → even k, high nibble → odd k
     lo = (w_int4 & 0xF).to(torch.int16)
     hi = ((w_int4 >> 4) & 0xF).to(torch.int16)
     w_int = torch.stack([lo, hi], dim=-1).reshape(N, K).float()
 
-    # per-group dequant: (w_int - zero) * scale, broadcast across each group
     n_groups = K // group_size
     w_int = w_int.reshape(N, n_groups, group_size)
     w_fp = (w_int - zeros.float().unsqueeze(-1)) * scales.float().unsqueeze(-1)
     w_fp = w_fp.reshape(N, K)
 
-    # fp32 accumulate to match what the Triton kernel was doing
     return (x.float() @ w_fp.t()).to(torch.float16)
 
 
@@ -51,8 +41,7 @@ def pack_triton_weights(w_int4_awq, scales, zeros, group_size=128):
 
     w_packed = ((w_int[:, 0::2] & 0xF) | ((w_int[:, 1::2] & 0xF) << 4)).contiguous()
 
-    scales_t = scales.t().contiguous()
-    zeros_t = zeros.t().contiguous()
+    return w_packed, scales.t().contiguous(), zeros.t().contiguous()
 
     return w_packed, scales_t, zeros_t
 
@@ -131,7 +120,6 @@ def _triton_gemm_kernel(
 
     acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)
 
-    # program pid_k handles K-blocks pid_k, pid_k+SPLIT_K, ... (SPLIT_K=1 => all)
     num_k = tl.cdiv(K, BLOCK_K)
     for ki in range(pid_k, num_k, SPLIT_K):
         offs_k = ki * BLOCK_K + tl.arange(0, BLOCK_K)
@@ -172,12 +160,17 @@ def _triton_gemm_kernel(
 
 
 def _choose_split_k(M, N, device, block_n=128, max_split=8):
-    # split-K only helps at small M where the grid can't fill the SMs; cap 8 per arXiv:2402.00025
-    if M > 64:
+    # Split-K is only useful when M is small enough that the (M/BLOCK_M, N/BLOCK_N)
+    # tile grid can't fill all SMs on its own — i.e. pure decode (M=1..16).
+    # For any prefill or eval batch the grid is already wide across N, and
+    # split_k>1 just multiplies the partials buffer size by split_k with zero
+    # throughput gain. At M=800, N=14336, split_k=8 that's 3.27 GB for partials
+    # alone on top of the model weights — guaranteed OOM on a 22 GB A10.
+    if M > 32:
         return 1
     n_sms = _sm_count(device)
     col_tiles = max(1, N // block_n)
-    target = (2 * n_sms) // col_tiles  # aim for ~2 SM-waves of column tiles
+    target = (2 * n_sms) // col_tiles
     for p in (max_split, 4, 2):
         if target >= p:
             return p
@@ -288,13 +281,11 @@ class QuantLinear(nn.Module):
         self.register_buffer("w_int4", w_int4)
         self.register_buffer("scales", scales)
         self.register_buffer("zeros", zeros)
-        # dividing x by awq_scale inverts the per-channel scaling baked into weights
         self.register_buffer("awq_scale", awq_scale)
         self.bias = nn.Parameter(bias) if bias is not None else None
 
     @classmethod
     def empty(cls, in_features, out_features, bias, group_size=128, kernel="vanilla", device="meta"):
-        # skeleton with correctly-shaped buffers, to be filled by load_state_dict(assign=True)
         n_groups = in_features // group_size
         sz_shape = (n_groups, out_features) if kernel == "triton" else (out_features, n_groups)
         return cls(
@@ -335,15 +326,6 @@ def replace_with_quant_linear(model, quant_params, group_size=128):
 
 
 def load_quantized_model(checkpoint, kernel="vanilla", device="cuda"):
-    """Build the model from a self-contained checkpoint without ever materializing
-    the original FP16 weights.
-
-    The architecture skeleton is created on the meta device (zero memory), the
-    quantized linears are swapped in as empty INT4 modules, then load_state_dict
-    with assign=True materializes everything straight from the checkpoint —
-    only INT4 weights + the small FP16 remainder (embeddings, norms, lm_head)
-    ever touch memory.
-    """
     from accelerate import init_empty_weights
     from transformers import AutoConfig, AutoModelForCausalLM
 
@@ -402,6 +384,6 @@ def load_quantized_model(checkpoint, kernel="vanilla", device="cuda"):
         ))
 
     model.load_state_dict(state_dict, assign=True, strict=False)
-    model.tie_weights()  # re-link lm_head to embeddings if tied (assign breaks the alias)
+    model.tie_weights()
     model.eval()
     return model.to(device)

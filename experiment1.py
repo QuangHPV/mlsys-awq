@@ -65,9 +65,11 @@ else:
     checkpoint = torch.load(args.weight_path, map_location="cpu", weights_only=True)
     model_id = checkpoint["model_id"]
 
-tokenizer = AutoTokenizer.from_pretrained(model_id)
+from_cache = checkpoint is not None
+tokenizer = AutoTokenizer.from_pretrained(model_id, local_files_only=from_cache)
+
 if checkpoint is None:
-    model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=torch.float16, device_map="cuda")
+    model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.float16, device_map="cuda")
     model.eval()
 else:
     model = kernel.load_quantized_model(checkpoint, kernel=args.kernel)

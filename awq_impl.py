@@ -4,13 +4,12 @@ from tqdm.auto import trange, tqdm
 
 
 def collect_activation_stats(model, calib_data, batch_size=2, n_samples_for_loss=512):
-    # returns per-channel mean |x| (s_X in AWQ) and cached inputs for the alpha search
     sums, counts, inputs = {}, {}, {}
     hooks = []
 
     def make_hook(n):
         def hook(_, inp, __):
-            x = inp[0].detach().reshape(-1, inp[0].shape[-1])  # (T, C_in), fp16
+            x = inp[0].detach().reshape(-1, inp[0].shape[-1])
             abs_sum = x.float().abs().sum(0)
             if n in sums:
                 sums[n] += abs_sum
@@ -42,7 +41,6 @@ def collect_activation_stats(model, calib_data, batch_size=2, n_samples_for_loss
 
 
 def pseudo_quantize(w, n_bits=4, group_size=128):
-    # quantize then immediately dequantize to measure error in fp32 space
     C_out, C_in = w.shape
     w = w.reshape(-1, group_size)
     w_min = w.min(dim=1, keepdim=True).values
@@ -55,7 +53,6 @@ def pseudo_quantize(w, n_bits=4, group_size=128):
 
 
 def search_best_scale(weight, act_scale, act_input, group_size=128, n_grid=20):
-    # AWQ Eq.4: minimise || (X/s) @ Q(W*s)^T - X @ W^T ||^2 over s = s_X^alpha
     w = weight.float()
     s_x = act_scale.float().to(w.device).clamp(min=1e-4)
     X = act_input.float().to(w.device)
@@ -75,7 +72,6 @@ def search_best_scale(weight, act_scale, act_input, group_size=128, n_grid=20):
 
 
 def quantize_and_pack(w, n_bits=4, group_size=128):
-    # asymmetric per-group: pack two INT4 values into one uint8 (low/high nibble)
     C_out, C_in = w.shape
     w = w.float().reshape(-1, group_size)
     w_min = w.min(dim=1, keepdim=True).values
@@ -113,7 +109,7 @@ def quantize_model(model, act_scales, act_inputs, group_size=128):
             "weight_int4": w_int4,
             "scales": scales,
             "zeros": zeros,
-            "awq_scale": best_scale.half(),
+            "awq_scale": best_scale.clamp(min=1e-3).half(),
             "bias": module.bias,
         }
         print(f"quantized {name}")

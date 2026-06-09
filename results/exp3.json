@@ -1,19 +1,114 @@
 [
   {
-    "model": "Qwen/Qwen2.5-7B-Instruct",
-    "mmlu": 0.55,
-    "peak_vram_gb": 18.44435456
+    "weight_path": "./checkpoint/gptq_meta-llama_Llama-3.1-8B-Instruct.pt",
+    "gsm8k": 0.7194844579226687,
+    "gsm8k_correct": 949,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 62.64563162642789,
+    "peak_vram_gb": 9.637622272
   },
   {
-    "weight_path": "../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.migrated.pt",
+    "weight_path": "./checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.pt",
     "gsm8k": 0.690674753601213,
-    "mmlu": 0.662227602905569,
-    "peak_vram_gb": 21.600664576
+    "gsm8k_correct": 911,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 62.88118603538318,
+    "peak_vram_gb": 9.637622272
   },
   {
-    "weight_path": "../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.migrated.pt",
-    "gsm8k": 0.6944655041698257,
-    "mmlu": 0.6623700327588663,
-    "peak_vram_gb": 21.600664576
+    "weight_path": "./checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.pt",
+    "gsm8k": 0.7073540561031084,
+    "gsm8k_correct": 933,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 62.96109067630696,
+    "peak_vram_gb": 9.538217984
+  },
+  {
+    "weight_path": "./checkpoint/gptq_Qwen_Qwen2.5-7B-Instruct.pt",
+    "gsm8k": 0.6178923426838514,
+    "gsm8k_correct": 815,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 63.180092491748105,
+    "peak_vram_gb": 9.538217984
+  },
+  {
+    "weight_path": "./checkpoint/gptq_meta-llama_Llama-3.1-8B-Instruct.pt",
+    "mmlu": 0.6580259222333001,
+    "mmlu_correct": 9240,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 29.98113309885619,
+    "peak_vram_gb": 20.188119552
+  },
+  {
+    "weight_path": "./checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.pt",
+    "mmlu": 0.6487679817689788,
+    "mmlu_correct": 9110,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 30.014873906189326,
+    "peak_vram_gb": 20.188119552
+  },
+  {
+    "weight_path": "./checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.pt",
+    "mmlu": 0.7152115083321464,
+    "mmlu_correct": 10043,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 31.60267251539882,
+    "peak_vram_gb": 16.640361984
+  },
+  {
+    "weight_path": "./checkpoint/gptq_Qwen_Qwen2.5-7B-Instruct.pt",
+    "mmlu": 0.7172055262783079,
+    "mmlu_correct": 10071,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 31.67030542352341,
+    "peak_vram_gb": 16.639575552
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
+    "gsm8k": 0.714177407126611,
+    "gsm8k_correct": 942,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 31.72776458538081,
+    "peak_vram_gb": 8.389405184
+  },
+  {
+    "weight_path": "./checkpoint/rtn_Qwen_Qwen2.5-7B-Instruct.pt",
+    "gsm8k": 0.7862016679302501,
+    "gsm8k_correct": 1037,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 63.09016064716032,
+    "peak_vram_gb": 9.538217984
+  },
+  {
+    "weight_path": "./checkpoint/rtn_meta-llama_Llama-3.1-8B-Instruct.pt",
+    "gsm8k": 0.6846095526914329,
+    "gsm8k_correct": 903,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 63.09485208898424,
+    "peak_vram_gb": 9.637622272
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
+    "mmlu": 0.7137872097991739,
+    "mmlu_correct": 10023,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 2.7892063977981754,
+    "peak_vram_gb": 14.048486912
+  },
+  {
+    "weight_path": "./checkpoint/rtn_meta-llama_Llama-3.1-8B-Instruct.pt",
+    "mmlu": 0.650049850448654,
+    "mmlu_correct": 9128,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 30.15558931005775,
+    "peak_vram_gb": 20.188119552
+  },
+  {
+    "weight_path": "./checkpoint/rtn_Qwen_Qwen2.5-7B-Instruct.pt",
+    "mmlu": 0.7162085173052272,
+    "mmlu_correct": 10057,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 31.703356289756666,
+    "peak_vram_gb": 16.64018176
   }
 ]
