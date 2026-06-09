@@ -11,17 +11,12 @@ import awq_impl
 import kernel
 
 parser = argparse.ArgumentParser()
-src = parser.add_mutually_exclusive_group(required=False)
+src = parser.add_mutually_exclusive_group(required=True)
 src.add_argument("--model", help="HF model id (its config sets the layer shapes).")
 src.add_argument("--weight_path", help="Quant checkpoint (.pt); its model_id sets the shapes.")
 parser.add_argument("--result_dir", default="results")
 parser.add_argument("--group_size", type=int, default=128)
 parser.add_argument("--m_sweep", default="1,2,4,8,16,32,64,128,256,512,1024")
-parser.add_argument("--plot", action="store_true", help="Emit roofline.png if matplotlib is available.")
-parser.add_argument("--plot_mode", choices=["scatter", "line"], default="scatter",
-                    help="scatter: one dot per M (default); line: connect M-sweep points, color per kernel.")
-parser.add_argument("--plot_only", action="store_true",
-                    help="Load existing exp4.json and plot without running the experiment.")
 args = parser.parse_args()
 
 os.makedirs(args.result_dir, exist_ok=True)
@@ -171,55 +166,7 @@ def ridge_crossing(roofline, peak_tflops, peak_bw):
     return {"ridge_intensity_flop_per_byte": ridge_intensity, "first_compute_bound_M": crossings}
 
 
-def plot_roofline(results, path, mode="scatter"):
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-
-    peak_tflops = results["hardware"]["peak_tflops_fp16"]
-    peak_bw = results["hardware"]["peak_bw_gbps"]
-    fig, ax = plt.subplots(figsize=(7, 5))
-    xs = [2 ** i for i in range(-2, 12)]
-    ax.plot(xs, [min(peak_tflops, peak_bw * x / 1e3) for x in xs], "k--", label="roofline")
-    markers = {"fp16": "o", "vanilla": "s", "triton": "^", "marlin": "D", "vllm": "*"}
-    colors = {"fp16": "C0", "vanilla": "C1", "triton": "C2", "marlin": "C3", "vllm": "C4"}
-    for kname in markers:
-        pts = sorted(
-            [(r["intensity"], r["tflops"]) for r in results["gemm_roofline"]
-             if r["kernel"] == kname and r["shape"] == "mlp_gate_up"],
-            key=lambda p: p[0],
-        )
-        if not pts:
-            continue
-        xs_k, ys_k = zip(*pts)
-        if mode == "line":
-            ax.plot(xs_k, ys_k, marker="o", markersize=4, color=colors[kname], label=kname)
-        else:
-            ax.scatter(xs_k, ys_k, marker=markers[kname], color=colors[kname], label=kname)
-    ax.set_xscale("log", base=2)
-    ax.set_yscale("log", base=2)
-    ax.set_xlabel("Arithmetic intensity (FLOP/byte)")
-    ax.set_ylabel("Achieved TFLOP/s")
-    ax.set_title(f"W4A16 roofline (mlp_gate_up, M sweep) [{mode}]")
-    ax.legend()
-    fig.tight_layout()
-    fig.savefig(path, dpi=120)
-    print(f"Saved roofline plot to {path}")
-
-
 def main():
-    plot_path = os.path.join(args.result_dir, "roofline.png")
-
-    if args.plot_only:
-        in_path = os.path.join(args.result_dir, "exp4.json")
-        with open(in_path) as f:
-            results = json.load(f)
-        plot_roofline(results, plot_path, args.plot_mode)
-        return
-
-    if args.model is None and args.weight_path is None:
-        parser.error("--model or --weight_path is required unless --plot_only is set")
-
     model_id = args.model or torch.load(args.weight_path, map_location="cpu", weights_only=True)["model_id"]
     config = AutoConfig.from_pretrained(model_id)
     shapes = layer_shapes(config)
@@ -246,12 +193,6 @@ def main():
     with open(out_path, "w") as f:
         json.dump(results, f, indent=2)
     print(f"Saved to {out_path}")
-
-    if args.plot:
-        try:
-            plot_roofline(results, plot_path, args.plot_mode)
-        except ImportError:
-            print("matplotlib not available; skipping plot")
 
 
 if __name__ == "__main__":
