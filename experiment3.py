@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 
 import torch
+import torch.multiprocessing as mp
 from datasets import load_dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from tqdm.auto import tqdm
@@ -23,7 +24,7 @@ def chunked(seq, n):
         yield seq[i:i + n]
 
 
-def load_model(args):
+def load_model(args, rank):
     if args.model:
         model_id, checkpoint = args.model, None
     else:
@@ -36,14 +37,16 @@ def load_model(args):
         tokenizer.pad_token = tokenizer.eos_token
 
     if checkpoint is None:
-        model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.float16, device_map="cuda")
+        model = AutoModelForCausalLM.from_pretrained(
+            model_id, torch_dtype=torch.float16, device_map={"": rank}
+        )
         model.eval()
     else:
-        model = kernel.load_quantized_model(checkpoint, kernel="triton", device=device)
+        model = kernel.load_quantized_model(checkpoint, kernel="marlin", device=f"cuda:{rank}")
     return model, tokenizer
 
 
-def evaluate_gsm8k(model, tokenizer, batch_size):
+def evaluate_gsm8k(model, tokenizer, batch_size, rank=0, n_gpus=1):
     device = next(model.parameters()).device
     train = load_dataset("openai/gsm8k", "main", split="train")
     test = load_dataset("openai/gsm8k", "main", split="test")
@@ -61,10 +64,13 @@ def evaluate_gsm8k(model, tokenizer, batch_size):
     prompts = [prefix + f"Question: {ex['question']}\nAnswer:" for ex in test]
     golds = [ex["answer"].split("####")[-1].strip().replace(",", "") for ex in test]
 
+    prompts = prompts[rank::n_gpus]
+    golds = golds[rank::n_gpus]
+
     correct = 0
     idx = 0
     gpu_time, n_batches = 0.0, 0
-    for batch in tqdm(list(chunked(prompts, batch_size)), desc="GSM8k"):
+    for batch in tqdm(list(chunked(prompts, batch_size)), desc=f"GSM8k[{rank}]", position=rank):
         inputs = tokenizer(batch, return_tensors="pt", padding=True).to(device)
         torch.cuda.synchronize(device)
         t0 = time.perf_counter()
@@ -82,7 +88,7 @@ def evaluate_gsm8k(model, tokenizer, batch_size):
     return correct, len(prompts), gpu_time / n_batches
 
 
-def evaluate_mmlu(model, tokenizer, batch_size, max_seq_len=2048):
+def evaluate_mmlu(model, tokenizer, batch_size, max_seq_len=2048, rank=0, n_gpus=1):
     device = next(model.parameters()).device
     dev = load_dataset("cais/mmlu", "all", split="dev")
     test = load_dataset("cais/mmlu", "all", split="test")
@@ -115,10 +121,13 @@ def evaluate_mmlu(model, tokenizer, batch_size, max_seq_len=2048):
     sorted_prompts = [prompts[i] for i in order]
     sorted_answers = [answers[i] for i in order]
 
+    sorted_prompts = sorted_prompts[rank::n_gpus]
+    sorted_answers = sorted_answers[rank::n_gpus]
+
     correct = 0
     idx = 0
     gpu_time, n_batches = 0.0, 0
-    for batch in tqdm(list(chunked(sorted_prompts, batch_size)), desc="MMLU"):
+    for batch in tqdm(list(chunked(sorted_prompts, batch_size)), desc=f"MMLU[{rank}]", position=rank):
         enc = tokenizer(
             batch, return_tensors="pt", padding=True,
             truncation=True, max_length=max_seq_len,
@@ -144,7 +153,7 @@ def evaluate_mmlu(model, tokenizer, batch_size, max_seq_len=2048):
             if p == sorted_answers[idx]:
                 correct += 1
             idx += 1
-    return correct, len(prompts), gpu_time / n_batches
+    return correct, len(sorted_prompts), gpu_time / n_batches
 
 
 def _save_result(entry):
@@ -161,6 +170,24 @@ def _save_result(entry):
     print(json.dumps(entry, indent=2))
 
 
+def run_worker(rank, n_gpus, args, tasks, queue):
+    model, tokenizer = load_model(args, rank)
+    torch.cuda.reset_peak_memory_stats()
+
+    results = {}
+    for task in tasks:
+        try:
+            if task == "gsm8k":
+                correct, total, latency = evaluate_gsm8k(model, tokenizer, args.batch_size, rank, n_gpus)
+            else:
+                correct, total, latency = evaluate_mmlu(model, tokenizer, args.batch_size, rank=rank, n_gpus=n_gpus)
+            results[task] = (correct, total, latency, None)
+        except Exception as e:
+            results[task] = (0, 0, 0.0, str(e))
+
+    queue.put((rank, results, torch.cuda.max_memory_allocated() / 1e9))
+
+
 def main():
     parser = argparse.ArgumentParser()
     src = parser.add_mutually_exclusive_group(required=True)
@@ -174,28 +201,66 @@ def main():
     tasks = [t.strip() for t in args.tasks.split(",") if t.strip()]
     base = {"model": args.model} if args.model else {"weight_path": args.weight_path}
 
-    model, tokenizer = load_model(args)
-    torch.cuda.reset_peak_memory_stats()
+    n_gpus = torch.cuda.device_count()
+
+    if n_gpus <= 1:
+        model, tokenizer = load_model(args, 0)
+        torch.cuda.reset_peak_memory_stats()
+        for task in tasks:
+            print(f"\n=== {task.upper()} ===")
+            try:
+                if task == "gsm8k":
+                    correct, total, latency = evaluate_gsm8k(model, tokenizer, args.batch_size)
+                else:
+                    correct, total, latency = evaluate_mmlu(model, tokenizer, args.batch_size)
+            except Exception as e:
+                print(f"{task} failed: {e}")
+                _save_result({**base, "task": task, "error": str(e)})
+                continue
+            _save_result({
+                **base,
+                task: correct / total if total else None,
+                f"{task}_correct": correct,
+                f"{task}_total": total,
+                f"{task}_latency_s": latency,
+                "peak_vram_gb": torch.cuda.max_memory_allocated() / 1e9,
+            })
+        return
+
+    ctx = mp.get_context("spawn")
+    queue = ctx.Queue()
+    procs = [ctx.Process(target=run_worker, args=(rank, n_gpus, args, tasks, queue))
+             for rank in range(n_gpus)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join()
+
+    all_results = {}
+    peak_vrams = []
+    while not queue.empty():
+        _, results, peak_vram = queue.get()
+        peak_vrams.append(peak_vram)
+        for task, val in results.items():
+            all_results.setdefault(task, []).append(val)
 
     for task in tasks:
         print(f"\n=== {task.upper()} ===")
-        try:
-            if task == "gsm8k":
-                correct, total, latency = evaluate_gsm8k(model, tokenizer, args.batch_size)
-            else:
-                correct, total, latency = evaluate_mmlu(model, tokenizer, args.batch_size)
-        except Exception as e:
-            print(f"{task} failed: {e}")
-            _save_result({**base, "task": task, "error": str(e)})
+        worker_results = all_results.get(task, [])
+        if any(err for _, _, _, err in worker_results):
+            errs = [err for _, _, _, err in worker_results if err]
+            _save_result({**base, "task": task, "error": errs[0]})
             continue
-
+        total_correct = sum(c for c, _, _, _ in worker_results)
+        total_total = sum(t for _, t, _, _ in worker_results)
+        avg_latency = sum(l for _, _, l, _ in worker_results) / len(worker_results)
         _save_result({
             **base,
-            task: correct / total if total else None,
-            f"{task}_correct": correct,
-            f"{task}_total": total,
-            f"{task}_latency_s": latency,
-            "peak_vram_gb": torch.cuda.max_memory_allocated() / 1e9,
+            task: total_correct / total_total if total_total else None,
+            f"{task}_correct": total_correct,
+            f"{task}_total": total_total,
+            f"{task}_latency_s": avg_latency,
+            "peak_vram_gb": max(peak_vrams),
         })
 
 

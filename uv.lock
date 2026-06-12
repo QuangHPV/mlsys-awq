@@ -1100,16 +1100,6 @@ wheels = [
 name = "marlin"
 version = "0.1.1"
 source = { editable = "marlin" }
-dependencies = [
-    { name = "numpy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "torch", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "numpy" },
-    { name = "torch" },
-]
 
 [[package]]
 name = "matplotlib"

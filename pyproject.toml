@@ -35,7 +35,7 @@ environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
 [tool.uv.extra-build-dependencies]
 autoawq = ["torch==2.5.1"]
 gptqmodel = ["torch==2.5.1", "nvidia-cuda-nvcc-cu12"]
-marlin = ["torch==2.5.1", "numpy==1.26.4", "nvidia-cuda-nvcc-cu12"]  # torch+numpy+nvcc to compile the .cu
+marlin = ["torch==2.5.1", "numpy==1.26.4", "nvidia-cuda-nvcc-cu12"]
 
 [[tool.uv.index]]
 name = "tuna"

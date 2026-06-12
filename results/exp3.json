@@ -5,7 +5,8 @@
     "gsm8k_correct": 949,
     "gsm8k_total": 1319,
     "gsm8k_latency_s": 62.64563162642789,
-    "peak_vram_gb": 9.637622272
+    "peak_vram_gb": 9.637622272,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.pt",
@@ -13,7 +14,8 @@
     "gsm8k_correct": 911,
     "gsm8k_total": 1319,
     "gsm8k_latency_s": 62.88118603538318,
-    "peak_vram_gb": 9.637622272
+    "peak_vram_gb": 9.637622272,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.pt",
@@ -21,7 +23,8 @@
     "gsm8k_correct": 933,
     "gsm8k_total": 1319,
     "gsm8k_latency_s": 62.96109067630696,
-    "peak_vram_gb": 9.538217984
+    "peak_vram_gb": 9.538217984,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/gptq_Qwen_Qwen2.5-7B-Instruct.pt",
@@ -29,7 +32,8 @@
     "gsm8k_correct": 815,
     "gsm8k_total": 1319,
     "gsm8k_latency_s": 63.180092491748105,
-    "peak_vram_gb": 9.538217984
+    "peak_vram_gb": 9.538217984,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/gptq_meta-llama_Llama-3.1-8B-Instruct.pt",
@@ -37,7 +41,8 @@
     "mmlu_correct": 9240,
     "mmlu_total": 14042,
     "mmlu_latency_s": 29.98113309885619,
-    "peak_vram_gb": 20.188119552
+    "peak_vram_gb": 20.188119552,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.pt",
@@ -45,7 +50,8 @@
     "mmlu_correct": 9110,
     "mmlu_total": 14042,
     "mmlu_latency_s": 30.014873906189326,
-    "peak_vram_gb": 20.188119552
+    "peak_vram_gb": 20.188119552,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/awq_Qwen_Qwen2.5-7B-Instruct.pt",
@@ -53,7 +59,8 @@
     "mmlu_correct": 10043,
     "mmlu_total": 14042,
     "mmlu_latency_s": 31.60267251539882,
-    "peak_vram_gb": 16.640361984
+    "peak_vram_gb": 16.640361984,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/gptq_Qwen_Qwen2.5-7B-Instruct.pt",
@@ -61,7 +68,8 @@
     "mmlu_correct": 10071,
     "mmlu_total": 14042,
     "mmlu_latency_s": 31.67030542352341,
-    "peak_vram_gb": 16.639575552
+    "peak_vram_gb": 16.639575552,
+    "selected": true
   },
   {
     "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
@@ -77,7 +85,8 @@
     "gsm8k_correct": 1037,
     "gsm8k_total": 1319,
     "gsm8k_latency_s": 63.09016064716032,
-    "peak_vram_gb": 9.538217984
+    "peak_vram_gb": 9.538217984,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/rtn_meta-llama_Llama-3.1-8B-Instruct.pt",
@@ -85,7 +94,8 @@
     "gsm8k_correct": 903,
     "gsm8k_total": 1319,
     "gsm8k_latency_s": 63.09485208898424,
-    "peak_vram_gb": 9.637622272
+    "peak_vram_gb": 9.637622272,
+    "selected": true
   },
   {
     "model": "Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4",
@@ -101,7 +111,8 @@
     "mmlu_correct": 9128,
     "mmlu_total": 14042,
     "mmlu_latency_s": 30.15558931005775,
-    "peak_vram_gb": 20.188119552
+    "peak_vram_gb": 20.188119552,
+    "selected": true
   },
   {
     "weight_path": "./checkpoint/rtn_Qwen_Qwen2.5-7B-Instruct.pt",
@@ -109,6 +120,61 @@
     "mmlu_correct": 10057,
     "mmlu_total": 14042,
     "mmlu_latency_s": 31.703356289756666,
-    "peak_vram_gb": 16.64018176
+    "peak_vram_gb": 16.64018176,
+    "selected": true
+  },
+  {
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "gsm8k": 0.7672479150871873,
+    "gsm8k_correct": 1012,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 23.41021648235619,
+    "peak_vram_gb": 22.768923136,
+    "selected": true
+  },
+  {
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "task": "mmlu",
+    "error": "CUDA out of memory. Tried to allocate 492.00 MiB. GPU 0 has a total capacity of 23.68 GiB of which 469.50 MiB is free. Process 4629 has 23.21 GiB memory in use. Of the allocated memory 20.50 GiB is allocated by PyTorch, and 2.44 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "gsm8k": 0.7270659590598939,
+    "gsm8k_correct": 959,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 20.24677480100876,
+    "peak_vram_gb": 22.95762944,
+    "selected": true
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "task": "mmlu",
+    "error": "CUDA out of memory. Tried to allocate 1.16 GiB. GPU 0 has a total capacity of 23.68 GiB of which 1.02 GiB is free. Process 32814 has 22.65 GiB memory in use. Of the allocated memory 19.24 GiB is allocated by PyTorch, and 3.13 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)"
+  },
+  {
+    "model": "meta-llama/Llama-3.1-8B-Instruct",
+    "mmlu": 0.670203674690215,
+    "mmlu_correct": 9411,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 1.442167457269509,
+    "peak_vram_gb": 22.313705984,
+    "selected": true
+  },
+  {
+    "model": "Qwen/Qwen2.5-7B-Instruct",
+    "mmlu": 0.7255376726961972,
+    "mmlu_correct": 10188,
+    "mmlu_total": 14042,
+    "mmlu_latency_s": 1.353223006943228,
+    "peak_vram_gb": 19.460550144,
+    "selected": true
+  },
+  {
+    "weight_path": "../checkpoint/rtn_Qwen_Qwen2.5-7B-Instruct.pt",
+    "gsm8k": 0.7899924184988628,
+    "gsm8k_correct": 1042,
+    "gsm8k_total": 1319,
+    "gsm8k_latency_s": 29.21823018484495,
+    "peak_vram_gb": 11.013711872
   }
 ]

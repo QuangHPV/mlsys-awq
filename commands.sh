@@ -64,20 +64,24 @@ HF_ENDPOINT=https://hf-mirror.com uv run migrate_checkpoint.py --old ../checkpoi
 #            [--tasks gsm8k,mmlu] [--batch_size 16] [--num_gpus 0]   # 0 = all visible GPUs
 
 # FP16 baseline, both tasks, all visible GPUs
-HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
-    --model meta-llama/Llama-3.1-8B-Instruct
+CUDA_VISIBLE_DEVICES=0,1,2,3 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --batch_size 8 \
+    --tasks mmlu
+CUDA_VISIBLE_DEVICES=0,1,2,3 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
+    --model Qwen/Qwen2.5-7B-Instruct \
+    --batch_size 8 \
+    --tasks mmlu
 
 # our INT4 (triton kernel) checkpoint on 4 GPUs
 CUDA_VISIBLE_DEVICES=0,1,2,3 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
-    --weight_path ../checkpoint/awq_meta-llama_Llama-3.1-8B-Instruct.migrated.pt \
-    --batch_size 8
+    --weight_path  ../checkpoint/rtn_Qwen_Qwen2.5-7B-Instruct.pt \
+    --batch_size 32 \
+    --tasks gsm8k
 
 # pre-quantized HF baselines (their own kernels), for reference
 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
     --model Qwen/Qwen2.5-7B-Instruct-GPTQ-Int4
-CUDA_VISIBLE_DEVICES=0,1,2,3 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \
-    --model Qwen/Qwen2.5-7B-Instruct \
-    --batch_size 32
 
 # single task: mmlu only (one forward, no generation -> fast)
 HF_ENDPOINT=https://hf-mirror.com uv run experiment3.py \

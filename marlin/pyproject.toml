@@ -1,0 +1,7 @@
+[build-system]
+requires = ["setuptools>=64", "torch", "numpy"]
+build-backend = "setuptools.build_meta:__legacy__"
+
+[project]
+name = "marlin"
+version = "0.1.1"

@@ -17,7 +17,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-
 from . import marlin_cuda
 
 # TODO: update signature
